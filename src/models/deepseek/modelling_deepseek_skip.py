@@ -1,21 +1,15 @@
-# limitations under the License.
-from typing import Optional, Tuple, Union
+import math
+from typing import Callable, Optional, Tuple, Union
 
 import torch
-import torch.utils.checkpoint
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
-from transformers import PreTrainedModel
-from dataclasses import dataclass
 from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
     ModelOutput
 )
-from transformers.models.llama.modeling_llama import(
-     LlamaRotaryEmbedding,
-     LlamaMLP, LlamaAttention, KwargsForCausalLM, FlashAttentionKwargs
-)
+
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.processing_utils import Unpack
 from transformers.modeling_layers import GradientCheckpointingLayer
@@ -24,10 +18,16 @@ from transformers.cache_utils import Cache, DynamicCache
 from transformers.generation import GenerationMixin
 from transformers.modeling_utils import PreTrainedModel
 
+
+from transformers.models.llama.modeling_llama import(
+    DeepseekV3MLP, DeepseekV3Attention, DeepseekV3RMSNorm, DeepseekV3MoE, DeepseekV3RotaryEmbedding, DeepseekV3TopkRouter,
+    KwargsForCausalLM, FlashAttentionKwargs
+)
+
 if is_torch_flex_attn_available():
     from torch.nn.attention.flex_attention import BlockMask
 
-    from transformers.integrations.flex_attention import make_flex_block_causal_mask
+    from ...integrations.flex_attention import make_flex_block_causal_mask
 
 # Import C++ extensions
 from sparse_transformers import (
@@ -35,21 +35,20 @@ from sparse_transformers import (
     WeightCache,
     approx_topk_threshold
 )
-
-from src.models.llama.configuration_llama_skip import LlamaSkipConnectionConfig
 from src.modeling_utils import (
     FastLoRAProjection, BaseModelOutputWithPastAndPredictorLoss
 )
 
+from src.models.deepseek.configuration_deepseek_skip import DeepseekV3SkipConnectionConfig
+
 logger = logging.get_logger(__name__)
 
-                     
-class LlamaSkipMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float, bias: bool = False):
+class DeepseekV3SkipMLP(nn.Module):
+    def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float):
         super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=bias)
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
         self.sparsity = sparsity
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
@@ -98,58 +97,44 @@ class LlamaSkipMLP(nn.Module):
         )
         return out
 
-class LlamaSkipRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-5):
-        """
-        LlamaSkipRMSNorm is equivalent to T5LayerNorm
-        """
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(hidden_size))
 
-    def _norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-
-    def forward(self, x):
-        output = self._norm(x.float()).type_as(x)
-        return output * self.weight
-
-    def extra_repr(self):
-        return f"{tuple(self.weight.shape)}, eps={self.eps}"
-        
-class LlamaSkipDecoderLayer(GradientCheckpointingLayer):
-    def __init__(self, config: LlamaSkipConnectionConfig, layer_idx: int):
+class DeepseekV3SkipDecoderLayer(GradientCheckpointingLayer):
+    def __init__(self, config: DeepseekV3SkipConnectionConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.layer_idx = layer_idx
-        self.sparsity = config.sparsity
-        self.self_attn = LlamaAttention(config=config, layer_idx=layer_idx)
 
-        self.input_layernorm = LlamaSkipRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = LlamaSkipRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-                # Create LoRA projection for sparsity prediction
+        self.self_attn = DeepseekV3Attention(config=config, layer_idx=layer_idx)
+
+        self.input_layernorm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
         self.lora_size = int(config.intermediate_size * 0.04)
         self.mlp_lora_proj = FastLoRAProjection(
             config.hidden_size, 
             config.intermediate_size,
             self.lora_size
         )
-        
         # Check if this is a training configuration
         self.is_training_config = getattr(config, 'training', False)
         # Only initialize predictor training components if explicitly enabled
         if self.is_training_config:
-            # Standard MLP for ground truth collection during training
-            self.mlp = LlamaMLP(config)
             # Loss function for predictor training
             self.predictor_loss_fn = nn.BCEWithLogitsLoss(reduction='mean')
+
+        # TODO: Add sparsity/skip layers to the MoE model
+        if layer_idx >= config.first_k_dense_replace:
+            self.mlp = DeepseekV3MoE(config)
         else:
-            self.mlp = LlamaSkipMLP(
-                config.hidden_size,
-                config.intermediate_size,
-                config.sparsity,
-                config.mlp_bias,
-            )
+            if self.is_training_config:
+                # Standard MLP for ground truth collection during training
+                self.mlp = DeepseekV3MLP(config)
+            else:
+                self.mlp = DeepseekV3SkipMLP(
+                    config.hidden_size,
+                    config.intermediate_size,
+                    config.sparsity,
+                )
+
     @property
     def weight_cache(self):
         """Dynamically access the weight cache from the MLP."""
@@ -175,7 +160,7 @@ class LlamaSkipDecoderLayer(GradientCheckpointingLayer):
         loss = self.predictor_loss_fn(predicted_scores, ground_truth_activations)
         
         return loss
-    
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -190,6 +175,7 @@ class LlamaSkipDecoderLayer(GradientCheckpointingLayer):
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
+
         if not self.training:  # Use PyTorch's built-in training flag
             # 1. LoRA projection to get importance scores
             lora_proj_scores = self.mlp_lora_proj(hidden_states.view(-1, hidden_states.shape[-1]))
@@ -204,7 +190,7 @@ class LlamaSkipDecoderLayer(GradientCheckpointingLayer):
             binary_mask = (lora_proj_scores >= lora_proj_scores.mean() + 2 * lora_proj_scores.std()).bool()
             # Normalize 2D mask to 1D by taking union across batch dimension
             self.weight_cache.update_active_weights(binary_mask.any(dim=0))  # [batch_size, intermediate_size] → [intermediate_size]
-          
+
         # Self Attention
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
@@ -228,6 +214,7 @@ class LlamaSkipDecoderLayer(GradientCheckpointingLayer):
         else:
             predictor_loss = None
         hidden_states = residual + hidden_states
+
         outputs = (hidden_states,)
         if output_attentions:
             outputs += (self_attn_weights,)
@@ -235,12 +222,44 @@ class LlamaSkipDecoderLayer(GradientCheckpointingLayer):
         return outputs, predictor_loss
 
 
+'''
+class DeepseekV3MLP(nn.Module):
+    def __init__(self, config, hidden_size=None, intermediate_size=None):
+        super().__init__()
+        self.config = config
+        self.hidden_size = config.hidden_size if hidden_size is None else hidden_size
+        self.intermediate_size = config.intermediate_size if intermediate_size is None else intermediate_size
 
-class LlamaSkipPreTrainedModel(PreTrainedModel):
-    config_class = LlamaSkipConnectionConfig
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.act_fn = ACT2FN[config.hidden_act]
+
+    def forward(self, x):
+        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return down_proj
+    
+class LlamaMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=config.mlp_bias)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.mlp_bias)
+        self.act_fn = ACT2FN[config.hidden_act]
+
+    def forward(self, x):
+        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return down_proj
+'''
+
+class DeepseekV3SkipPreTrainedModel(PreTrainedModel):
+    config_class = DeepseekV3SkipConnectionConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["LlamaSkipDecoderLayer"]
+    _no_split_modules = ["DeepseekV3SkipDecoderLayer"]
     _skip_keys_device_placement = ["past_key_values"]
     _supports_flash_attn_2 = True
     _supports_sdpa = True
@@ -260,21 +279,25 @@ class LlamaSkipPreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, LlamaSkipRMSNorm):
+        elif isinstance(module, DeepseekV3RMSNorm):
             module.weight.data.fill_(1.0)
+        elif isinstance(module, DeepseekV3TopkRouter):
+            module.weight.data.normal_(mean=0.0, std=std)
 
-class LlamaSkipConnectionModel(LlamaSkipPreTrainedModel):
-    def __init__(self, config :LlamaSkipConnectionConfig):
+class DeepseekV3SkipModel(DeepseekV3SkipPreTrainedModel):
+    _keys_to_ignore_on_load_unexpected = [r"model\.layers\.61.*"]
+
+    def __init__(self, config: DeepseekV3SkipConnectionConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList(
-            [LlamaSkipDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+            [DeepseekV3SkipDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = LlamaSkipRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.rotary_emb = LlamaRotaryEmbedding(config=config)
+        self.norm = DeepseekV3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.rotary_emb = DeepseekV3RotaryEmbedding(config=config)
         self.gradient_checkpointing = False
 
         # Initialize weights and apply final processing
@@ -286,29 +309,6 @@ class LlamaSkipConnectionModel(LlamaSkipPreTrainedModel):
     def set_input_embeddings(self, value):
         self.embed_tokens = value
 
-    def get_predictor_parameters(self):
-        """Get parameters of all predictor networks for optimization."""
-        predictor_params = []
-        for layer in self.layers:
-            predictor_params.extend(layer.mlp_lora_proj.parameters())
-        return predictor_params
-    
-    def freeze_non_predictor_parameters(self):
-        """Freeze all parameters except predictor networks."""
-        # Freeze main model parameters
-        for param in self.parameters():
-            param.requires_grad = False
-
-        for layer in self.layers:
-            # Keep predictor parameters trainable
-            for param in layer.mlp_lora_proj.parameters():
-                param.requires_grad = True
-
-    def unfreeze_all_parameters(self):
-        """Unfreeze all model parameters."""
-        for param in self.parameters():
-            param.requires_grad = True
-    
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -361,6 +361,7 @@ class LlamaSkipConnectionModel(LlamaSkipPreTrainedModel):
         )
 
         hidden_states = inputs_embeds
+
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
@@ -533,8 +534,10 @@ class LlamaSkipConnectionModel(LlamaSkipPreTrainedModel):
                 )
 
         return causal_mask
+    
+    
 
-class LlamaSkipConnectionForCausalLM(LlamaSkipPreTrainedModel, GenerationMixin):
+class DeepseekSkipConnectionForCausalLM(DeepseekV3SkipPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
@@ -551,11 +554,11 @@ class LlamaSkipConnectionForCausalLM(LlamaSkipPreTrainedModel, GenerationMixin):
         "model.layers.*.standard_mlp.gate_proj.weight",
         "model.layers.*.standard_mlp.up_proj.weight",
         "model.layers.*.standard_mlp.down_proj.weight"
-    ]
+    ] #these may still need to be fixed
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = LlamaSkipConnectionModel(config)
+        self.model = DeepseekV3SkipModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -681,6 +684,3 @@ class LlamaSkipConnectionForCausalLM(LlamaSkipPreTrainedModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-
-__all__ = [LlamaSkipConnectionForCausalLM, LlamaSkipMLP, FastLoRAProjection]
