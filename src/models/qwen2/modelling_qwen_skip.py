@@ -19,7 +19,7 @@ from transformers.generation import GenerationMixin
 from transformers.modeling_utils import PreTrainedModel
 
 
-from transformers.models.qwen2.modeling_qwen import(
+from transformers.models.qwen2.modeling_qwen2 import(
     Qwen2MLP, Qwen2Attention, Qwen2RMSNorm, Qwen2RotaryEmbedding,
     KwargsForCausalLM, FlashAttentionKwargs
 )
@@ -27,7 +27,7 @@ from transformers.models.qwen2.modeling_qwen import(
 if is_torch_flex_attn_available():
     from torch.nn.attention.flex_attention import BlockMask
 
-    from ...integrations.flex_attention import make_flex_block_causal_mask
+    from transformers.integrations.flex_attention import make_flex_block_causal_mask
 
 # Import C++ extensions
 from sparse_transformers import (
@@ -133,7 +133,6 @@ class Qwen2SkipDecoderLayer(GradientCheckpointingLayer):
                 config.hidden_size,
                 config.intermediate_size,
                 config.sparsity,
-                config.mlp_bias,
             )
 
     @property
@@ -555,7 +554,7 @@ class Qwen2SkipConnectionModel(Qwen2SkipPreTrainedModel):
         return causal_mask
     
 
-class Qwen2ForCausalLM(Qwen2SkipPreTrainedModel, GenerationMixin):
+class Qwen2SkipConnectionForCausalLM(Qwen2SkipPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
@@ -704,3 +703,5 @@ class Qwen2ForCausalLM(Qwen2SkipPreTrainedModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+    
+__all__ = [Qwen2SkipConnectionForCausalLM, Qwen2SkipMLP]
