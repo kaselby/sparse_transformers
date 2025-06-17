@@ -8,10 +8,6 @@ import numpy as np
 
 import torch
 from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
-from src.models.llama.modelling_llama_skip import LlamaSkipConnectionForCausalLM
-from src.models.llama.configuration_llama_skip import LlamaSkipConnectionConfig
-from src.models.qwen2.modelling_qwen_skip import Qwen2SkipConnectionForCausalLM
-from src.models.qwen2.configuration_qwen_skip import Qwen2SkipConnectionConfig
 from src.modeling_utils import FastLoRAProjection
 from src.utilities.cuda_utils import GPUMonitor, setup_cuda_debugging
 from src.utilities.sys_utils import print_system_info
@@ -396,7 +392,7 @@ def main():
     print_system_info(args)
 
     # Load models and tokenizer
-    config = AutoConfig.from_json_file(args.config)
+    config = AutoConfig.from_pretrained(args.config)
     checkpoint = config._name_or_path
     tokenizer = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
