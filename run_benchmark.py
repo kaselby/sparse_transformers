@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
 from src.modeling_utils import FastLoRAProjection
 from src.utilities.cuda_utils import GPUMonitor, setup_cuda_debugging
 from src.utilities.sys_utils import print_system_info
+import src.models   # adds models to registry
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
