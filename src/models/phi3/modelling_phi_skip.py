@@ -40,7 +40,7 @@ from src.modeling_utils import (
     FastLoRAProjection, BaseModelOutputWithPastAndPredictorLoss
 )
 
-from src.models.phi.configuration_phi_skip import Phi3SkipConnectionConfig
+from src.models.phi3.configuration_phi_skip import Phi3SkipConnectionConfig
 from src.modeling_skip import SkipMLP, SkipDecoderLayer, build_skip_connection_model, build_skip_connection_model_for_causal_lm
 
 logger = logging.get_logger(__name__)
@@ -177,6 +177,13 @@ class Phi3SkipPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, Phi3RMSNorm):
             module.weight.data.fill_(1.0)
+
+    @classmethod
+    def from_pretrained(*args, **kwargs):   # Splits the gate_proj and up_proj matrices in the MLP layers
+        out = super().from_pretrained(*args, **kwargs)
+        for module in out.modules():
+            if isinstance(module, Phi3SkipMLP):
+                module._update_weights()
 
 Phi3SkipConnectionModelBase: type[Phi3SkipPreTrainedModel] = build_skip_connection_model(Phi3SkipPreTrainedModel)
 
@@ -350,6 +357,23 @@ Phi3SkipConnectionForCausalLMBase: type[Phi3SkipPreTrainedModel] = \
 
 
 class Phi3SkipConnectionForCausalLM(Phi3SkipConnectionForCausalLMBase):
+    _keys_to_ignore_on_load_missing = [
+        "model.layers.*.mlp.combined_proj_buffer",
+        "model.layers.*.mlp.down_proj_buffer",
+        "model.layers.*.mlp.init_mask",
+        "model.layers.*.mlp.weight_cache",
+        "model.layers.*.mlp_lora_proj.down.weight",
+        "model.layers.*.mlp_lora_proj.intermediate",
+        "model.layers.*.mlp_lora_proj.output", 
+        "model.layers.*.mlp_lora_proj.up.weight",
+        "model.layers.*.mlp_mask",
+        "model.layers.*.mlp.gate_proj.weight",
+        "model.layers.*.mlp.up_proj.weight",
+        "model.layers.*.standard_mlp.gate_proj.weight",
+        "model.layers.*.standard_mlp.up_proj.weight",
+        "model.layers.*.standard_mlp.down_proj.weight"
+    ]
+
     def prepare_inputs_for_generation(
         self,
         input_ids,
@@ -388,6 +412,9 @@ class Phi3SkipConnectionForCausalLM(Phi3SkipConnectionForCausalLMBase):
             **kwargs,
         )
         return model_inputs
+    
+
+        
 
 
 __all__ = [Phi3SkipConnectionForCausalLM]

@@ -1,5 +1,5 @@
-from . import configuration_qwen_skip
-from . import modelling_qwen_skip
+from . import configuration_mistral_skip
+from . import modelling_mistral_skip
 
 from transformers import AutoConfig, AutoModelForCausalLM
 from .configuration_mistral_skip import MistralSkipConnectionConfig
