@@ -19,7 +19,7 @@ from transformers.generation import GenerationMixin
 from transformers.modeling_utils import PreTrainedModel
 
 
-from transformers.models.Mistral.modeling_Mistral import(
+from transformers.models.mistral.modeling_mistral import(
     MistralMLP, MistralAttention, MistralRMSNorm, MistralRotaryEmbedding,
     KwargsForCausalLM, FlashAttentionKwargs
 )

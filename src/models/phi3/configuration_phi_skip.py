@@ -3,4 +3,4 @@ import os
 from typing import Union, Any
 from src.configuration_skip import build_skip_config
 
-Qwen2SkipConnectionConfig: type[Phi3Config] = build_skip_config(Phi3Config, "phi3-skip")
+Phi3SkipConnectionConfig: type[Phi3Config] = build_skip_config(Phi3Config, "phi3-skip")

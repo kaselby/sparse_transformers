@@ -48,12 +48,12 @@ logger = logging.get_logger(__name__)
 
 class Phi3SkipMLP(SkipMLP):
     def __init__(self, hidden_size, intermediate_size, sparsity):
-        super().__init__(hidden_size, intermediate_size, sparsity)
+        super().__init__(hidden_size, intermediate_size, sparsity, False)
         self.gate_up_proj = nn.Linear(hidden_size, 2 * intermediate_size, bias=False)
 
     def _update_weights(self):  # check sizes and axes to ensure this is being done correctly
         with torch.no_grad():
-            gate_proj_weight, up_proj_weight = self.gate_up_proj.weight.chunk(2, dim=1)
+            gate_proj_weight, up_proj_weight = self.gate_up_proj.weight.chunk(2, dim=0)
             self.gate_proj.weight.copy_(gate_proj_weight)
             self.up_proj.weight.copy_(up_proj_weight)
         del self.gate_up_proj
@@ -68,7 +68,6 @@ class Phi3SkipDecoderLayer(SkipDecoderLayer):
         self.resid_attn_dropout = nn.Dropout(config.resid_pdrop)
         self.resid_mlp_dropout = nn.Dropout(config.resid_pdrop)
 
-
     def _set_mlp_train(self, config: Phi3SkipConnectionConfig):
         self.mlp = Phi3MLP(config)
 
@@ -77,7 +76,6 @@ class Phi3SkipDecoderLayer(SkipDecoderLayer):
             config.hidden_size,
             config.intermediate_size,
             config.sparsity,
-            False,
         )
 
     def forward(
@@ -179,11 +177,12 @@ class Phi3SkipPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
     @classmethod
-    def from_pretrained(*args, **kwargs):   # Splits the gate_proj and up_proj matrices in the MLP layers
-        out = super().from_pretrained(*args, **kwargs)
+    def from_pretrained(cls, *args, **kwargs):   # Splits the gate_proj and up_proj matrices in the MLP layers
+        out = super(Phi3SkipPreTrainedModel, cls).from_pretrained(*args, **kwargs)
         for module in out.modules():
             if isinstance(module, Phi3SkipMLP):
                 module._update_weights()
+        return out
 
 Phi3SkipConnectionModelBase: type[Phi3SkipPreTrainedModel] = build_skip_connection_model(Phi3SkipPreTrainedModel)
 
