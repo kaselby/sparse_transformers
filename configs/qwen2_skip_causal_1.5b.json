@@ -2,7 +2,7 @@
   "_name_or_path": "Qwen/Qwen2-1.5B",
   "sparsity": 0.3,
   "architectures": [
-    "Qwen2SkipForCausalLM"
+    "Qwen2SkipConnectionForCausalLM"
   ],
   "attention_dropout": 0.0,
   "bos_token_id": 151643,
