@@ -139,7 +139,7 @@ private:
 
 public:
     WeightCacheOpt(const torch::Tensor &init_mask, int64_t hidden_size,
-                const torch::Tensor &gate_weight, const torch::Tensor &up_weight,
+                const torch::Tensor &up_weight,
                 const torch::Tensor &down_weight)
     {
         init(init_mask, hidden_size, gate_weight, up_weight, down_weight);

@@ -1,3 +1,4 @@
+/*
 // For TorchScript support
 #include <torch/script.h>
 
@@ -25,6 +26,7 @@ namespace py = pybind11;
 // Add custom headers
 #include "weight_cache_opt.h"
 #include "approx_topk.h"
+*/
 
 // Forward declarations of CPU/CUDA implementations
 torch::Tensor sparse_mlp_forward_cpu_opt(
@@ -107,8 +109,8 @@ torch::Tensor sparse_mlp_forward_cpu_opt(
         down_proj_buffer.resize_({batch_size, hidden_size});
 
     // For combined_proj_buffer: [batch_size, 2 * gate_size]
-    if (combined_proj_buffer.size(0) != batch_size || combined_proj_buffer.size(1) != gate_size)
-        combined_proj_buffer.resize_({batch_size, gate_size});
+    if (up_proj_buffer.size(0) != batch_size || up_proj_buffer.size(1) != gate_size)
+        up_proj_buffer.resize_({batch_size, gate_size});
 
     // Optimal grain size for heavy matmul operations
     const int64_t num_threads = at::get_num_threads();
@@ -140,7 +142,7 @@ torch::Tensor sparse_mlp_forward_cpu_opt(
         
         // Perform batch matrix multiplication for gate and up projections
         // This is more efficient than individual matmuls
-        torch::matmul_out(up_proj_block, input_block, concat_weight.t());
+        torch::matmul_out(up_proj_block, input_block, active_up_weight.t());
         
         // Split into gate and up projections
         //auto gate_proj = combined_proj_block.narrow(1, 0, gate_size);  // [block_size, gate_size]
@@ -154,21 +156,4 @@ torch::Tensor sparse_mlp_forward_cpu_opt(
 
     // Reshape output back to original shape if input was multi-dimensional
     return needs_reshape ? down_proj_buffer.view(original_shape) : down_proj_buffer;
-}
-
-// Register TorchScript custom classes and operators
-TORCH_LIBRARY(sparse_mlp, m)
-{
-    // Register the optimized weight cache
-    m.class_<WeightCacheOpt>("WeightCacheOpt")
-        .def(torch::init<const torch::Tensor &, int64_t, const torch::Tensor &, const torch::Tensor &, const torch::Tensor &>())
-        .def("update_active_weights", &WeightCacheOpt::update_active_weights)
-        .def("get_active_up_weight", &WeightCacheOpt::get_concat_weight)
-        .def("get_active_down_weight", &WeightCacheOpt::get_active_down_weight);
-
-    // Register sparse MLP operator
-    m.def("forward", sparse_mlp_forward_opt);
-
-    // Register Count-Min Sketch approximate top-k threshold operator
-    m.def("approx_topk_threshold", approx_topk_threshold);
 }

@@ -12,11 +12,11 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
     ModelOutput
 )
-from transformers.models.OPT.modeling_OPT import(
+from transformers.models.opt.modeling_opt import(
      OPTLearnedPositionalEmbedding, OPTAttention,
      KwargsForCausalLM, FlashAttentionKwargs
 )
-from transformers import ACT2FN
+from transformers.activations import ACT2FN
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.processing_utils import Unpack
 from transformers.modeling_layers import GradientCheckpointingLayer
@@ -31,12 +31,12 @@ if is_torch_flex_attn_available():
 
 # Import C++ extensions
 from sparse_transformers import (
-    sparse_mlp_forward_OPT,
-    WeightCacheOPT,
+    sparse_mlp_forward_opt,
+    WeightCacheOpt,
     approx_topk_threshold
 )
 
-from src.models.OPT.configuration_OPT_skip import OPTSkipConnectionConfig
+from src.models.opt.configuration_opt_skip import OPTSkipConnectionConfig
 from src.modeling_skip import (
     SkipMLP, SkipDecoderLayer, BaseModelOutputWithPastAndPredictorLoss,
     build_skip_connection_model, build_skip_connection_model_for_causal_lm
