@@ -631,6 +631,8 @@ class OPTSkipConnectionModel(OPTSkipConnectionModelBase):
 class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _keys_to_ignore_on_load_missing = [
+        "model.layers.*.mlp.up_proj",
+        "model.layers.*.mlp.down_proj",
         "model.layers.*.mlp.combined_proj_buffer",
         "model.layers.*.mlp.down_proj_buffer",
         "model.layers.*.mlp.init_mask",
