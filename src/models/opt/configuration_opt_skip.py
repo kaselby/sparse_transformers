@@ -3,4 +3,4 @@ import os
 from typing import Union, Any
 from src.configuration_skip import build_skip_config
 
-OptSkipConnectionConfig: type[OPTConfig] = build_skip_config(OPTConfig, "opt-skip")
+OPTSkipConnectionConfig: type[OPTConfig] = build_skip_config(OPTConfig, "opt-skip")

@@ -25,6 +25,8 @@ namespace py = pybind11;
 #endif
 
 // Add custom headers
+#include "sparse_mlp_op_opt.h"
+#include "weight_cache_opt.h"
 #include "weight_cache.h"
 #include "approx_topk.h"
 
@@ -168,8 +170,15 @@ TORCH_LIBRARY(sparse_mlp, m)
         .def("get_concat_weight", &WeightCache::get_concat_weight)
         .def("get_active_down_weight", &WeightCache::get_active_down_weight);
 
+    m.class_<WeightCacheOpt>("WeightCacheOpt")
+        .def(torch::init<const torch::Tensor &, int64_t, const torch::Tensor &, const torch::Tensor &>())
+        .def("update_active_weights", &WeightCacheOpt::update_active_weights)
+        .def("get_active_up_weight", &WeightCacheOpt::get_concat_weight)
+        .def("get_active_down_weight", &WeightCacheOpt::get_active_down_weight);
+
     // Register sparse MLP operator
     m.def("forward", sparse_mlp_forward);
+    m.def("forward_opt", sparse_mlp_forward_opt);
 
     // Register Count-Min Sketch approximate top-k threshold operator
     m.def("approx_topk_threshold", approx_topk_threshold);
