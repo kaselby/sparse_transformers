@@ -171,7 +171,7 @@ TORCH_LIBRARY(sparse_mlp, m)
     m.class_<WeightCacheOpt>("WeightCacheOpt")
         .def(torch::init<const torch::Tensor &, int64_t, const torch::Tensor &, const torch::Tensor &>())
         .def("update_active_weights", &WeightCacheOpt::update_active_weights)
-        .def("get_active_up_weight", &WeightCacheOpt::get_concat_weight)
+        .def("get_active_up_weight", &WeightCacheOpt::get_active_up_weight)
         .def("get_active_down_weight", &WeightCacheOpt::get_active_down_weight);
 
     // Register sparse MLP operator

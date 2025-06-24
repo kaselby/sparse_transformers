@@ -113,14 +113,17 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
     def _init_components(self, config: OPTSkipConnectionConfig, layer_idx: int):
         self.self_attn = OPTAttention(config=config, layer_idx=layer_idx)
         self.self_attn_layer_norm = nn.LayerNorm(
-            self.embed_dim, elementwise_affine=config.layer_norm_elementwise_affine
+            self.hidden_size, elementwise_affine=config.layer_norm_elementwise_affine
+        )
+        self.final_layer_norm = nn.LayerNorm(
+            self.hidden_size, elementwise_affine=config.layer_norm_elementwise_affine
         )
         self.do_layer_norm_before = config.do_layer_norm_before
         self.dropout = config.dropout
 
         # Needed in order to load weights, will be deleted after
-        self.fc1 = nn.Linear(self.embed_dim, config.ffn_dim, bias=config.enable_bias)
-        self.fc2 = nn.Linear(config.ffn_dim, self.embed_dim, bias=config.enable_bias) 
+        self.fc1 = nn.Linear(self.hidden_size, config.intermediate_size, bias=config.enable_bias)
+        self.fc2 = nn.Linear(config.intermediate_size, self.hidden_size, bias=config.enable_bias) 
 
     def _fix_unloaded_weights(self):    # check if this works - not sure if this will be called by the loop in from pretrained
         self.mlp.up_proj.load_state_dict({'weight': self.fc1.weight, 'bias': self.fc1.bias}, assign=True)
@@ -133,8 +136,8 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
 
     def _set_mlp_inference(self, config: OPTSkipConnectionConfig):
         self.mlp = OPTSkipMLP(
-            config.embed_dim,
-            config.ffn_dim,
+            config.hidden_size,
+            config.intermediate_size,
             config.sparsity,
             config.enable_bias,
         )
@@ -627,29 +630,76 @@ class OPTSkipConnectionModel(OPTSkipConnectionModelBase):
                 )
 
         return causal_mask
+    
+
+class OPTSkipDecoderWrapper(OPTSkipPreTrainedModel):
+    def __init__(self, config: OPTSkipConnectionConfig):
+        super().__init__(config)
+        self.decoder = OPTSkipConnectionModel(config)
+        self.post_init()
+
+    def get_input_embeddings(self):
+        return self.decoder.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.decoder.embed_tokens = value
+
+    def get_decoder(self):
+        return self.decoder
+    
+    def forward(self,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Cache] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        return_dict: Optional[bool] = None,
+        **kwargs: Unpack[FlashAttentionKwargs],
+    ) -> Union[tuple, BaseModelOutputWithPastAndPredictorLoss]:
+        return self.decoder.forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            cache_position=cache_position,
+            head_mask=head_mask,
+            return_dict=return_dict,
+            **kwargs,
+        )
+
+
 
 class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _keys_to_ignore_on_load_missing = [
-        "model.layers.*.mlp.up_proj",
-        "model.layers.*.mlp.down_proj",
-        "model.layers.*.mlp.combined_proj_buffer",
-        "model.layers.*.mlp.down_proj_buffer",
-        "model.layers.*.mlp.init_mask",
-        "model.layers.*.mlp.weight_cache",
-        "model.layers.*.mlp_lora_proj.down.weight",
-        "model.layers.*.mlp_lora_proj.intermediate",
-        "model.layers.*.mlp_lora_proj.output", 
-        "model.layers.*.mlp_lora_proj.up.weight",
-        "model.layers.*.mlp_mask",
-        "model.layers.*.standard_mlp.gate_proj.weight",
-        "model.layers.*.standard_mlp.up_proj.weight",
-        "model.layers.*.standard_mlp.down_proj.weight"
+        "model.decoder.layers.*.mlp.up_proj",
+        "model.decoder.layers.*.mlp.down_proj",
+        "model.decoder.layers.*.mlp.combined_proj_buffer",
+        "model.decoder.layers.*.mlp.down_proj_buffer",
+        "model.decoder.layers.*.mlp.init_mask",
+        "model.decoder.layers.*.mlp.weight_cache",
+        "model.decoder.layers.*.mlp_lora_proj.down.weight",
+        "model.decoder.layers.*.mlp_lora_proj.intermediate",
+        "model.decoder.layers.*.mlp_lora_proj.output", 
+        "model.decoder.layers.*.mlp_lora_proj.up.weight",
+        "model.decoder.layers.*.mlp_mask",
+        "model.decoder.layers.*.standard_mlp.gate_proj.weight",
+        "model.decoder.layers.*.standard_mlp.up_proj.weight",
+        "model.decoder.layers.*.standard_mlp.down_proj.weight"
     ]
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = OPTSkipConnectionModel(config)
+        self.model = OPTSkipDecoderWrapper(config)
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
@@ -667,10 +717,10 @@ class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
         return out
 
     def get_input_embeddings(self):
-        return self.model.embed_tokens
+        return self.model.decoder.embed_tokens
 
     def set_input_embeddings(self, value):
-        self.model.embed_tokens = value
+        self.model.decoder.embed_tokens = value
 
     def get_output_embeddings(self):
         return self.lm_head
@@ -679,14 +729,14 @@ class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
         self.lm_head = new_embeddings
 
     def set_decoder(self, decoder):
-        self.model = decoder
+        self.model.decoder = decoder
 
     def get_decoder(self):
-        return self.model
+        return self.model.decoder
     
     def get_predictor_parameters(self):
         """Get parameters of all predictor networks for optimization."""
-        return self.model.get_predictor_parameters()
+        return self.model.decoder.get_predictor_parameters()
 
     def freeze_non_predictor_parameters(self):
         """Freeze all parameters except predictor networks."""
@@ -695,11 +745,11 @@ class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
             param.requires_grad = False
         
         # Freeze model parameters except predictors
-        self.model.freeze_non_predictor_parameters()
+        self.model.decoder.freeze_non_predictor_parameters()
 
     def reset_cache(self):
         """Reset cache of all layers."""
-        for layer in self.model.layers:
+        for layer in self.model.decoder.layers:
             layer.mlp.weight_cache = None
             layer.mlp.initialize_weight_cache()
 
@@ -808,23 +858,23 @@ class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
         return reordered_past
 
 
-OPTSkipConnectionForCausalLMBase: type[OPTSkipPreTrainedModel] = \
-    build_skip_connection_model_for_causal_lm(OPTSkipPreTrainedModel, OPTSkipConnectionModel)
+#OPTSkipConnectionForCausalLMBase: type[OPTSkipPreTrainedModel] = \
+#    build_skip_connection_model_for_causal_lm(OPTSkipPreTrainedModel, OPTSkipConnectionModel)
 
-class OPTSkipConnectionForCausalLM(OPTSkipConnectionForCausalLMBase):
-    _keys_to_ignore_on_load_missing = [
-        "model.layers.*.mlp.combined_proj_buffer",
-        "model.layers.*.mlp.down_proj_buffer",
-        "model.layers.*.mlp.init_mask",
-        "model.layers.*.mlp.weight_cache",
-        "model.layers.*.mlp_lora_proj.down.weight",
-        "model.layers.*.mlp_lora_proj.intermediate",
-        "model.layers.*.mlp_lora_proj.output", 
-        "model.layers.*.mlp_lora_proj.up.weight",
-        "model.layers.*.mlp_mask",
-        "model.layers.*.mlp.gate_proj.weight",
-        "model.layers.*.mlp.up_proj.weight",
-        "model.layers.*.standard_mlp.gate_proj.weight",
-        "model.layers.*.standard_mlp.up_proj.weight",
-        "model.layers.*.standard_mlp.down_proj.weight"
-    ]
+#class OPTSkipConnectionForCausalLM(OPTSkipConnectionForCausalLMBase):
+#    _keys_to_ignore_on_load_missing = [
+#        "model.layers.*.mlp.combined_proj_buffer",
+#        "model.layers.*.mlp.down_proj_buffer",
+#        "model.layers.*.mlp.init_mask",
+#        "model.layers.*.mlp.weight_cache",
+#        "model.layers.*.mlp_lora_proj.down.weight",
+#        "model.layers.*.mlp_lora_proj.intermediate",
+#        "model.layers.*.mlp_lora_proj.output", 
+#        "model.layers.*.mlp_lora_proj.up.weight",
+#        "model.layers.*.mlp_mask",
+#        "model.layers.*.mlp.gate_proj.weight",
+#        "model.layers.*.mlp.up_proj.weight",
+#        "model.layers.*.standard_mlp.gate_proj.weight",
+#        "model.layers.*.standard_mlp.up_proj.weight",
+#        "model.layers.*.standard_mlp.down_proj.weight"
+#    ]
