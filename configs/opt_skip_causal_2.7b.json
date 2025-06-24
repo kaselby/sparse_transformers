@@ -12,7 +12,7 @@
   "do_layer_norm_before": true,
   "dropout": 0.1,
   "eos_token_id": 2,
-  "ffn_dim": 10240,
+  "intermediate_size": 10240,
   "hidden_size": 2560,
   "init_std": 0.02,
   "layerdrop": 0.0,
