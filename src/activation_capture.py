@@ -1,5 +1,5 @@
 import torch.nn.functional as F
-
+from transformers import OPTForCausalLM
 
 class ActivationCapture:
     """Helper class to capture activations from model layers."""
@@ -15,7 +15,8 @@ class ActivationCapture:
         self.remove_hooks()
         
         # Hook into each transformer layer
-        for i, layer in enumerate(model.model.layers):
+        layers = model.model.layers if not isinstance(model, OPTForCausalLM) else model.model.decoder.layers
+        for i, layer in enumerate(layers):
 
             # Capture hidden states before MLP
             handle = layer.register_forward_hook(
@@ -23,34 +24,42 @@ class ActivationCapture:
                 with_kwargs=True
             )
             self.handles.append(handle)
+
+            if isinstance(model, OPTForCausalLM):
+                if hasattr(layer, 'fc1'):
+                    handle = layer.fc1.register_forward_hook(
+                        self._create_mlp_hook(i, 'gate')
+                    )
+                    self.handles.append(handle)
+            else:
+                # Capture MLP gate activations (after activation function)
+                if hasattr(layer.mlp, 'gate_proj'):
+                    handle = layer.mlp.gate_proj.register_forward_hook(
+                        self._create_mlp_hook(i, 'gate')
+                    )
+                    self.handles.append(handle)
+                
+                # Also capture up_proj activations
+                if hasattr(layer.mlp, 'up_proj'):
+                    handle = layer.mlp.up_proj.register_forward_hook(
+                        self._create_mlp_hook(i, 'up')
+                    )
+                    self.handles.append(handle)
+
             
-            '''
-            # Capture MLP gate activations (after activation function)
-            if hasattr(layer.mlp, 'gate_proj'):
-                handle = layer.mlp.gate_proj.register_forward_hook(
-                    self._create_mlp_hook(i, 'gate')
-                )
-                self.handles.append(handle)
             
-            # Also capture up_proj activations
-            if hasattr(layer.mlp, 'up_proj'):
-                handle = layer.mlp.up_proj.register_forward_hook(
-                    self._create_mlp_hook(i, 'up')
-                )
-                self.handles.append(handle)
-            '''
-            if hasattr(layer.mlp, 'down_proj'):
-                handle = layer.mlp.down_proj.register_forward_hook(
-                    self._create_mlp_hook(i, 'down')
-                )
-                self.handles.append(handle)
+            #if hasattr(layer.mlp, 'down_proj'):
+            #    handle = layer.mlp.down_proj.register_forward_hook(
+            #        self._create_mlp_hook(i, 'down')
+            #    )
+            #    self.handles.append(handle)
 
     def _create_hidden_state_hook(self, layer_idx):
         def hook(module, args, kwargs, output):
             # args[0] is the input hidden states to the layer
             if len(args) > 0:
                 # Just detach, don't clone or move to CPU yet
-                self.hidden_states[layer_idx] = output.detach()
+                self.hidden_states[layer_idx] = args[0].detach()
             return output
         return hook
     
@@ -58,7 +67,7 @@ class ActivationCapture:
         def hook(module, input, output):
             key = f"{layer_idx}_{proj_type}"
             # Just detach, don't clone or move to CPU yet
-            self.mlp_activations[key] = input[0].detach()
+            self.mlp_activations[key] = output.detach()
             return output
         return hook
     
