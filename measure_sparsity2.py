@@ -35,7 +35,7 @@ class ContextualSparsityAnalyzer:
         self.tokenizer = tokenizer
         self.device = device
 
-        self.capture = ActivationCapture(model)
+        self.capture = ActivationCapture()
         self.mlp_sparsity = defaultdict(list)  # Layer -> sparsity ratio
         self.union_sparsity = defaultdict(lambda: defaultdict(list))  # Batch Size -> Layer -> sparsity ratio
 
@@ -57,14 +57,14 @@ class ContextualSparsityAnalyzer:
         # Compute sparsity
         for layer_idx in range(len(self.model.model.layers)):
             if layer_idx in self.capture.hidden_states:
-                sparsity_masks = (self.capture.hidden_states[layer_idx] > 0)
+                sparsity_masks = (self.capture.mlp_activations['%d_gate' % layer_idx] <= 0)
 
                 # Naive sparsity computation
-                self.mlp_sparsity[layer_idx].append(sparsity_masks.long().mean().item())
+                self.mlp_sparsity[layer_idx].append(sparsity_masks.float().mean().item())
 
                 # Level of sparsity after union over batch dim
                 union_sparsity_mask = sparsity_masks.any(dim=0)
-                self.union_sparsity[batch_size][layer_idx].append(union_sparsity_mask.long().mean().item())
+                self.union_sparsity[batch_size][layer_idx].append(union_sparsity_mask.float().mean().item())
 
                 # TODO: Add HNSW sparsity computation for both attn heads and mlp neurons
                 # TODO: Compute union sparsity over multiple different batch sizes
@@ -123,7 +123,7 @@ class ContextualSparsityAnalyzer:
         
         plt.plot(layer_indices, mlp_sparsity_by_layer)
         plt.xlabel('Layer Index')
-        plt.ylabel('\% of Neurons Active')
+        plt.ylabel('%% of Neurons Active')
         plt.title('MLP Sparsity By Layer')
         plt.xticks(layer_indices[::4], [f'L{i}' for i in layer_indices[::4]])
 
@@ -134,7 +134,7 @@ class ContextualSparsityAnalyzer:
             union_sparsity_by_layer = np.array([sparsity[layer_name] for layer_name in layer_names])
             plt.plot(layer_indices, union_sparsity_by_layer, label=str(batch_size))
         plt.xlabel('Layer Index')
-        plt.ylabel('\% of Neurons Active')
+        plt.ylabel('%% of Neurons Active')
         plt.title('MLP Sparsity By Layer')
         plt.legend()
         plt.xticks(layer_indices[::4], [f'L{i}' for i in layer_indices[::4]])
@@ -162,6 +162,11 @@ def analyze_sparsity(args, analyzer, dataloader, device):
             # Log progress
             if (batch_idx + 1) % 100 == 0:
                 logger.info(f"Processed {batch_idx + 1}/{len(dataloader)} sequences")
+
+        for layer_idx in range(len(analyzer.mlp_sparsity)):
+            analyzer.mlp_sparsity[layer_idx] = sum(analyzer.mlp_sparsity[layer_idx]) / len(analyzer.mlp_sparsity[layer_idx])
+            for k, v in analyzer.union_sparsity:
+                analyzer.union_sparsity[k][layer_idx] = sum(v[layer_idx]) / len(v[layer_idx])
 
         # Save results
         logger.info("Saving analysis results...")
@@ -233,7 +238,7 @@ class C4Dataset(Dataset):
                 encoding = tokenizer(
                     text,
                     truncation=True,
-                    padding=False,
+                    padding='max_length',
                     max_length=max_length,
                     return_tensors='pt'
                 )
@@ -310,7 +315,7 @@ def main():
 
     analyzer = ContextualSparsityAnalyzer(model, tokenizer, device)
 
-    analyze_sparsity(analyzer, dataloader, device)
+    analyze_sparsity(args, analyzer, dataloader, device)
 
 
 

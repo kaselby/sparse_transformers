@@ -43,7 +43,7 @@ class ActivationCapture:
             # args[0] is the input hidden states to the layer
             if len(args) > 0:
                 # Just detach, don't clone or move to CPU yet
-                self.hidden_states[layer_idx] = args[0].detach()
+                self.hidden_states[layer_idx] = output.detach()
             return output
         return hook
     
