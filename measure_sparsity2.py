@@ -57,7 +57,7 @@ class ContextualSparsityAnalyzer:
         # Compute sparsity
         for layer_idx in range(len(self.model.model.layers)):
             if layer_idx in self.capture.hidden_states:
-                sparsity_masks = (self.capture.mlp_activations['%d_gate' % layer_idx] <= 0)
+                sparsity_masks = (self.capture.mlp_activations['%d_down' % layer_idx] <= 0)
 
                 # Naive sparsity computation
                 self.mlp_sparsity[layer_idx].append(sparsity_masks.float().mean().item())

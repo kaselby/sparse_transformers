@@ -24,6 +24,7 @@ class ActivationCapture:
             )
             self.handles.append(handle)
             
+            '''
             # Capture MLP gate activations (after activation function)
             if hasattr(layer.mlp, 'gate_proj'):
                 handle = layer.mlp.gate_proj.register_forward_hook(
@@ -37,7 +38,13 @@ class ActivationCapture:
                     self._create_mlp_hook(i, 'up')
                 )
                 self.handles.append(handle)
-    
+            '''
+            if hasattr(layer.mlp, 'up_proj'):
+                handle = layer.mlp.down_proj.register_forward_hook(
+                    self._create_mlp_hook(i, 'down')
+                )
+                self.handles.append(handle)
+
     def _create_hidden_state_hook(self, layer_idx):
         def hook(module, args, kwargs, output):
             # args[0] is the input hidden states to the layer
@@ -51,7 +58,7 @@ class ActivationCapture:
         def hook(module, input, output):
             key = f"{layer_idx}_{proj_type}"
             # Just detach, don't clone or move to CPU yet
-            self.mlp_activations[key] = output.detach()
+            self.mlp_activations[key] = input[0].detach()
             return output
         return hook
     
