@@ -39,7 +39,7 @@ class ActivationCapture:
                 )
                 self.handles.append(handle)
             '''
-            if hasattr(layer.mlp, 'up_proj'):
+            if hasattr(layer.mlp, 'down_proj'):
                 handle = layer.mlp.down_proj.register_forward_hook(
                     self._create_mlp_hook(i, 'down')
                 )
