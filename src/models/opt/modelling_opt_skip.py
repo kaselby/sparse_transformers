@@ -31,8 +31,8 @@ if is_torch_flex_attn_available():
 
 # Import C++ extensions
 from sparse_transformers import (
-    sparse_mlp_forward_opt,
-    WeightCacheOpt,
+    sparse_mlp_forward,
+    WeightCache,
     approx_topk_threshold
 )
 
@@ -73,17 +73,19 @@ class OPTSkipMLP(nn.Module):
 
         # Register buffers - start with reasonable size and ensure they can be resized
         self.register_buffer('down_proj_buffer', torch.zeros(1, hidden_size, requires_grad=False))
-        self.register_buffer('up_proj_buffer', torch.zeros(1, int(intermediate_size * sparsity), requires_grad=False))
+        self.register_buffer('combined_proj_buffer', torch.zeros(1, int(intermediate_size * sparsity), requires_grad=False))
 
     def initialize_weight_cache(self):
         """Tie weights after weights are loaded (called from post_init)."""
         if self.weight_cache is None:
             # Create and initialize weight cache
-            self.weight_cache = WeightCacheOpt(   
+            self.weight_cache = WeightCache(   
                 self.init_mask,
                 self.hidden_size,
+                None,
                 self.up_proj.weight, 
-                self.down_proj.weight
+                self.down_proj.weight,
+                False
             )
 
     def to(self, *args, **kwargs):
@@ -92,19 +94,20 @@ class OPTSkipMLP(nn.Module):
         device = args[0] if args else kwargs.get('device')
         if device:
             self.down_proj_buffer = self.down_proj_buffer.to(device)
-            self.up_proj_buffer = self.up_proj_buffer.to(device)
+            self.combined_proj_buffer = self.combined_proj_buffer.to(device)
             if hasattr(self, 'init_mask'):
                 self.init_mask = self.init_mask.to(device)
         return result
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = sparse_mlp_forward_opt(
+        out = sparse_mlp_forward(
             x.detach(), 
-            self.weight_cache.get_active_up_weight(),
+            self.weight_cache.get_concat_weight(),
             self.weight_cache.get_active_down_weight(),
             self.down_proj_buffer,
-            self.up_proj_buffer,
-            "relu"
+            self.combined_proj_buffer,
+            "relu",
+            False
         )
         return out
     
