@@ -117,12 +117,6 @@ private:
         if (num_active == 0)
             throw std::runtime_error("No active weights");
 
-        // Create gate tensor directly from buffer
-        if (has_gate_buffers)
-            auto gate_tensor = torch::from_blob(active_gate_buffer.get(),
-                                                {static_cast<int64_t>(num_active), gate_row_size},
-                                                torch::TensorOptions().dtype(dtype));
-
         // Create up tensor directly from buffer
         auto up_tensor = torch::from_blob(active_up_buffer.get(),
                                           {static_cast<int64_t>(num_active), up_row_size},
@@ -134,9 +128,13 @@ private:
                                                    torch::TensorOptions().dtype(dtype));
         auto down_tensor = down_tensor_packed.t(); // [hidden_dim, num_active]
 
-        // Concatenate and move to target device
+        // Create gate tensor directly from buffer
         if (has_gate_buffers)
         {
+            auto gate_tensor = torch::from_blob(active_gate_buffer.get(),
+                                                {static_cast<int64_t>(num_active), gate_row_size},
+                                                torch::TensorOptions().dtype(dtype));
+            // Concatenate and move to target device
             active_weights_cache = torch::cat({gate_tensor, up_tensor}, 0).to(current_device);
         }
         else
@@ -170,20 +168,17 @@ public:
         min_active_indices = 0;
         up_row_size = up_weight.size(1);
         down_row_size = hidden_dim; // After transpose: [intermediate_size, hidden_size]
+        if (has_gate_buffers)
+            gate_row_size = gate_weight.size(1); 
 
         // Allocate cache-aligned memory pools
+        const size_t gate_total_size = sparse_dim * gate_row_size;
         const size_t up_total_size = sparse_dim * up_row_size;
         const size_t down_total_size = sparse_dim * hidden_dim; // Transposed shape
 
         if (has_gate_buffers)
-        {
-            gate_row_size = gate_weight.size(1); 
-            const size_t gate_total_size = sparse_dim * gate_row_size;
-
             gate_memory_pool = std::unique_ptr<float[], AlignedDeleter>(
                 static_cast<float *>(aligned_alloc_wrapper(gate_total_size * sizeof(float))));
-        }
-
         up_memory_pool = std::unique_ptr<float[], AlignedDeleter>(
             static_cast<float *>(aligned_alloc_wrapper(up_total_size * sizeof(float))));
         down_memory_pool_transposed = std::unique_ptr<float[], AlignedDeleter>(
@@ -202,15 +197,17 @@ public:
         index_to_position.reserve(max_active_indices);
 
         // Copy weights to memory pools
-        if (has_gate_buffers)
-            auto gate_cpu = gate_weight.to(torch::kCPU).contiguous();
         auto up_cpu = up_weight.to(torch::kCPU).contiguous();
         auto down_cpu = down_weight.to(torch::kCPU).contiguous();
 
         // Copy gate and up weights directly (row-major format)
-        if (has_gate_buffers)
-            std::memcpy(gate_memory_pool.get(), gate_cpu.data_ptr<float>(), gate_total_size * sizeof(float));
         std::memcpy(up_memory_pool.get(), up_cpu.data_ptr<float>(), up_total_size * sizeof(float));
+        if (has_gate_buffers)
+        {
+            auto gate_cpu = gate_weight.to(torch::kCPU).contiguous();
+            std::memcpy(gate_memory_pool.get(), gate_cpu.data_ptr<float>(), gate_total_size * sizeof(float));
+        }
+        
 
         // Transpose down matrix during copy: [hidden_size, intermediate_size] -> [intermediate_size, hidden_size]
         auto down_data = down_cpu.data_ptr<float>();

@@ -81,7 +81,8 @@ class SkipMLP(nn.Module):
                 self.hidden_size,
                 self.gate_proj.weight,
                 self.up_proj.weight, 
-                self.down_proj.weight
+                self.down_proj.weight,
+                True
             )
 
     def to(self, *args, **kwargs):
@@ -102,7 +103,8 @@ class SkipMLP(nn.Module):
             self.weight_cache.get_active_down_weight(),  # type: ignore
             self.down_proj_buffer,
             self.combined_proj_buffer,
-            self.act_fn
+            self.act_fn,
+            True
         )
         return out
 
