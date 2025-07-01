@@ -196,7 +196,7 @@ TORCH_LIBRARY(sparse_mlp, m)
 {
     // Register the optimized weight cache
     m.class_<WeightCache>("WeightCache")
-        .def(torch::init<const torch::Tensor &, int64_t, const torch::Tensor &, const torch::Tensor &, const torch::Tensor &>(), bool)
+        .def(torch::init<const torch::Tensor &, int64_t, const torch::Tensor &, const torch::Tensor &, const torch::Tensor &, bool>())
         .def("update_active_weights", &WeightCache::update_active_weights)
         .def("get_concat_weight", &WeightCache::get_concat_weight)
         .def("get_active_down_weight", &WeightCache::get_active_down_weight);
