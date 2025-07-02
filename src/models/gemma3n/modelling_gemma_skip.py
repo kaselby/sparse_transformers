@@ -83,7 +83,7 @@ class Gemma3nSkipDecoderLayer(SkipDecoderLayer):
         active_prediction_normed = self.input_layernorm(active_prediction)
         laurel_output = self.laurel(active_prediction_normed)
 
-        if not self.training:  # Use PyTorch's built-in training flag
+        if self.use_skip and not self.training:  # Use PyTorch's built-in training flag
             self._compute_binary_mask(active_prediction_normed)
 
         # apply global RoPE to non-sliding layer only

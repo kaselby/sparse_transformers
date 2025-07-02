@@ -21,6 +21,7 @@ def parse_args():
     parser.add_argument("--model_type", type=str, choices=["hf", "sparse"], default="hf")
     parser.add_argument("--model_name_or_config", type=str, required=True,
                        help="Name or path of the base model (e.g., meta-llama/Llama-2-7b-hf)")
+    parser.add_argument("--disable_sparsity", action="store_true")
     parser.add_argument("--sp_dir", type=str, default="",
                         help="Path to trained predictor dir for sparse model.")
     parser.add_argument("--tasks", nargs='+', default=["hellaswag"], 
@@ -62,6 +63,8 @@ def main():
             layer.mlp_lora_proj.load_state_dict(pretrained_dict)
         model.tie_weights()
         model.reset_cache()
+        if args.disable_sparsity:
+            model.set_skip_active(False)
 
     wrapped_model = HFLM(
         pretrained=model,

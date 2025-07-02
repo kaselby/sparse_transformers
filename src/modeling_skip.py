@@ -105,12 +105,13 @@ class SkipMLP(nn.Module):
 
 
 class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
-    def __init__(self, config: PretrainedConfig, layer_idx: int):
+    def __init__(self, config: PretrainedConfig, layer_idx: int, use_skip:bool = True):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
         self.layer_idx = layer_idx
         self.sparsity = config.sparsity
+        self.use_skip = use_skip
 
         self._init_components(config, layer_idx)
 
@@ -170,7 +171,7 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)  # type: ignore
-        if not self.training:  # Use PyTorch's built-in training flag
+        if self.use_skip and not self.training:  # Use PyTorch's built-in training flag
             self._compute_binary_mask(hidden_states)
           
         # Self Attention
@@ -401,6 +402,10 @@ def build_skip_connection_model_for_causal_lm(pretrained_model_class: type[PreTr
 
         def get_decoder(self):
             return self.model
+
+        def set_skip_active(self, flag):
+            for layer in self.get_decoder().layers:
+                layer.use_skip = flag
 
         def get_predictor_parameters(self):
             """Get parameters of all predictor networks for optimization."""
