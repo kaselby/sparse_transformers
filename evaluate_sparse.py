@@ -10,6 +10,8 @@ from lm_eval import simple_evaluate
 from lm_eval.utils import make_table
 from lm_eval.models.huggingface import HFLM
 
+import src.models
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -71,6 +73,7 @@ def main():
 
     wrapped_model = HFLM(
         pretrained=model,
+        backend="causal",
         batch_size=args.batch_size,
         device=device
     )
