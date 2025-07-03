@@ -68,12 +68,12 @@ class SkipMLP(nn.Module):
         self.register_buffer('down_proj_buffer', torch.zeros(1, hidden_size, requires_grad=False))
         self.register_buffer('combined_proj_buffer', torch.zeros(1, 2 * int(intermediate_size * sparsity), requires_grad=False))
 
-    def initialize_weight_cache(self):
+    def initialize_weight_cache(self, init_mask=None):
         """Tie weights after weights are loaded (called from post_init)."""
         if self.weight_cache is None:
             # Create and initialize weight cache
             self.weight_cache = WeightCache(   
-                self.init_mask,
+                init_mask if init_mask is not None else self.init_mask,
                 self.hidden_size,
                 self.gate_proj.weight,
                 self.up_proj.weight, 
@@ -150,12 +150,19 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         """Dynamically access the weight cache from the MLP."""
         if hasattr(self.mlp, 'weight_cache') and isinstance(self.mlp, SkipMLP):
             return self.mlp.weight_cache
-
+        
+    def _set_skip_active(self, flag):
+        if not self.is_training_config and self.use_skip != flag:
+            init_mask = torch.ones(self.intermediate_size, dtype=torch.bool) if not flag else None
+            self.mlp.weight_cache = None
+            self.mlp.initialize_weight_cache(init_mask=init_mask)
+            self.use_skip = flag
     
     def _compute_binary_mask(self, hidden_states):
-        lora_proj_scores = self.mlp_lora_proj(hidden_states.view(-1, hidden_states.shape[-1]))
-        binary_mask = (lora_proj_scores >= lora_proj_scores.mean() + 2 * lora_proj_scores.std()).bool()
-        self.weight_cache.update_active_weights(binary_mask.any(dim=0))  # type: ignore
+        if self.use_skip:
+            lora_proj_scores = self.mlp_lora_proj(hidden_states.view(-1, hidden_states.shape[-1]))
+            binary_mask = (lora_proj_scores >= lora_proj_scores.mean() + 2 * lora_proj_scores.std()).bool()
+            self.weight_cache.update_active_weights(binary_mask.any(dim=0))  # type: ignore
     
     def forward(
         self,
@@ -171,7 +178,7 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)  # type: ignore
-        if self.use_skip and not self.training:  # Use PyTorch's built-in training flag
+        if not self.training:  # Use PyTorch's built-in training flag
             self._compute_binary_mask(hidden_states)
           
         # Self Attention
@@ -405,7 +412,7 @@ def build_skip_connection_model_for_causal_lm(pretrained_model_class: type[PreTr
 
         def set_skip_active(self, flag):
             for layer in self.get_decoder().layers:
-                layer.use_skip = flag
+                layer._set_skip_active(flag)
 
         def get_predictor_parameters(self):
             """Get parameters of all predictor networks for optimization."""
