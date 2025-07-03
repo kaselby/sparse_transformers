@@ -127,7 +127,7 @@ torch::Tensor sparse_mlp_forward_cpu(
         grain_size = std::min(grain_size, max_grain_matmul);
     }
 
-    auto actfn = get_activation(activation_fn);
+    //auto actfn = get_activation(activation_fn);
 
     // Process each batch block in parallel
     at::parallel_for(0, batch_size, grain_size, [&](int64_t start, int64_t end)
@@ -151,7 +151,7 @@ torch::Tensor sparse_mlp_forward_cpu(
         auto gate_proj = combined_proj_block.narrow(1, 0, gate_size);  // [block_size, gate_size]
         auto up_proj = combined_proj_block.narrow(1, gate_size, gate_size);  // [block_size, gate_size]
 
-        gate_proj = actfn(gate_proj); // out of place, since some activation functions (e.g. gelu) do not support inplace operations
+        gate_proj = act_apply(gate_proj, activation_fn); // out of place, since some activation functions (e.g. gelu) do not support inplace operations
         gate_proj.mul_(up_proj);  // In-place element-wise multiplication
         
         // Final projection to output dimension

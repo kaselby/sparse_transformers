@@ -6,34 +6,36 @@
 
 namespace F = torch::nn::functional;
 
-auto gelu_tanh = std::bind(F::gelu, _1, F::GELUFuncOptions().approximate("none"));
-
-std::map ACT2FN;
-bool initialized = False;
-
+/*
 typedef torch::Tensor (*op_func)(torch::Tensor);
+
+auto gelu_tanh = std::bind(F::gelu, std::placeholders::_1, F::GELUFuncOptions().approximate("tanh"));
+
+std::map<std::string, op_func> ACT2FN;
+bool initialized = False;
 
 op_func get_activation(string key)
 {
     if (!initialized)
-        init_registry()
-    return ACT2FN[key]
+        init_registry();
+    return ACT2FN[key];
 }
 
 void init_registry()
 {
-    std::map<std::string, torch::Tensor (*)(torch::Tensor)> ACT2FN;
+    std::map::clear(ACT2FN);
     initialized=true;
 
     // Add activation functions to map
     ACT2FN["silu"] = &F::silu;
     ACT2FN["relu"] = &F::relu;
-    ACT2FN["gelu_pytorch_tanh"] = &gelu_tanh;
+    ACT2FN["gelu"] = &F::gelu;
+    ACT2FN["gelu_tanh"] = &gelu_tanh;
 }
-
+*/
 
 // Simple version for now - could consider replacing this by a dictionary of functions keyed to activation names
-torch::Tensor act_apply(torch::Tensor input, string act_fn)
+torch::Tensor act_apply(torch::Tensor &input, const std::string &act_fn)
 {
     if (act_fn == "silu")
         return F::silu(input);
