@@ -97,7 +97,7 @@ class Phi3SkipDecoderLayer(SkipDecoderLayer):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
-        if self.use_skip and not self.training:  # Use PyTorch's built-in training flag
+        if not self.training:  # Use PyTorch's built-in training flag
             self._compute_binary_mask(hidden_states)
 
         # Self Attention
