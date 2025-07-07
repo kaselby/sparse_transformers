@@ -127,7 +127,7 @@ def process_batch(
             .numpy()
             .astype(np.float32)
         )
-        mlp_activation = model.activation_capture.get_gate_activations(layer_idx)
+        mlp_activation = model.activation_capture.get_mlp_activations(layer_idx)
         mlp_activations_dict[layer_idx] = (
             mlp_activation[0]
             .view(-1, mlp_activation.shape[-1])

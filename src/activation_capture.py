@@ -4,30 +4,23 @@ from abc import ABC, abstractmethod
 
 
 class ActivationCapture(ABC):
-    """Helper class to capture activations from model layers."""
-    has_gate_proj: bool
-    has_up_proj: bool
-    
+    """Helper class to capture activations from model layers."""    
     def __init__(self, model):
         self.model = model
         self.mlp_activations = {}
         self.handles = []
+        
 
     @abstractmethod
-    def _register_gate_hook(self, layer_idx, layer):
-        pass
-
-    @abstractmethod
-    def _register_up_hook(self, layer_idx, layer):
+    def _register_activation_hook(self, layer_idx, layer):
         pass
 
     @abstractmethod
     def get_layers(self):
         pass
 
-
     @abstractmethod
-    def get_gate_activations(self, layer_idx):
+    def get_mlp_activations(self, layer_idx):
         """Get combined MLP activations for a layer."""
         pass
 
@@ -37,18 +30,10 @@ class ActivationCapture(ABC):
         self.remove_hooks()
         
         # Hook into each transformer layer
-        for i, layer in enumerate(self.get_layers()):            
-            # Capture MLP gate activations (after activation function)
-            if self.has_gate_proj:
-                handle = self._register_gate_hook(i, layer)
-                if handle is not None:
-                    self.handles.append(handle)
-                        
-            # Also capture up_proj activations
-            if self.has_up_proj:
-                handle = self._register_up_hook(i, layer)
-                if handle is not None:
-                    self.handles.append(handle)
+        for i, layer in enumerate(self.get_layers()):
+            handle = self._register_activation_hook(i, layer)   
+            if handle is not None:
+                self.handles.append(handle)    
     
     def remove_hooks(self):
         """Remove all registered hooks."""
@@ -64,9 +49,7 @@ class ActivationCapture(ABC):
 
 class ActivationCaptureDefault(ActivationCapture):
     """Helper class to capture activations from model layers."""
-    has_gate_proj: bool = True
-    has_up_proj: bool = True
-
+    
     def get_layers(self):
         return self.model.get_decoder().layers
 
@@ -78,31 +61,19 @@ class ActivationCaptureDefault(ActivationCapture):
             return output
         return hook
 
-    def _register_gate_hook(self, layer_idx, layer):
-        handle = layer.mlp.gate_proj.register_forward_hook(
-            self._create_mlp_hook(layer_idx, 'gate')
-        )
-        return handle
-
-    def _register_up_hook(self, layer_idx, layer):
-        handle = layer.mlp.up_proj.register_forward_hook(
-            self._create_mlp_hook(layer_idx, 'up')
+    def _register_activation_hook(self, layer_idx, layer):
+        handle = layer.mlp.act_fn.register_forward_hook(
+            self._create_mlp_hook(layer_idx, 'act')
         )
         return handle
     
-    def get_gate_activations(self, layer_idx):
-        gate_key = f"{layer_idx}_gate"
-        if gate_key in self.mlp_activations:
-            gate_act = self.mlp_activations[gate_key]
-            return F.silu(gate_act)
+    def get_mlp_activations(self, layer_idx):
+        act_key = f"{layer_idx}act"
+        if act_key in self.mlp_activations:
+            act = self.mlp_activations[act_key]
+            return act
         return None
 
-    def get_up_activations(self, layer_idx):
-        up_key = f"{layer_idx}_up"
-        if up_key in self.mlp_activations:
-            up_act = self.mlp_activations[up_key]
-            return up_act
-        return None
 
 class ActivationCaptureTraining(ActivationCaptureDefault):
     """Additional Hidden State capture for training dataset generation"""
