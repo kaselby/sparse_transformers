@@ -109,6 +109,7 @@ def main():
     parser.add_argument("--resume_from_checkpoint", action="store_true", help="Resume training from the latest checkpoint")
     parser.add_argument("--checkpoint_path", type=str, default=None, help="Specific checkpoint path to resume from (optional)")
     parser.add_argument("--restart_if_missing", action="store_true", help="Restart training from scratch if correct checkpoint not found.")
+    parser.add_argument("--load_from_best", action="store_true", help="Resume training only from best performing lora size for each layer.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--use_wandb", action="store_true", help="Use Weights & Biases logging")
     parser.add_argument("--wandb_project", type=str, default="llama-skip-predictors", help="W&B project name")
@@ -181,6 +182,8 @@ def main():
         save_dir=args.output_dir,
         save_interval=args.checkpoint_save_interval,
         resume_from_checkpoint=args.resume_from_checkpoint,
+        restart_if_missing=args.restart_if_missing,
+        load_best_only= args.load_best_only,
         checkpoint_path=args.checkpoint_path,
         seed=args.seed
     )

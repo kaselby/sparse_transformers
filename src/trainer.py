@@ -403,7 +403,7 @@ class LayerwisePredictorTrainer:
             num_training_steps=total_steps,
         )
 
-        best_f1 = 0.0
+
         global_step = 0
         start_epoch = 0
 
@@ -420,7 +420,7 @@ class LayerwisePredictorTrainer:
                     )
                     global_step = checkpoint_data["global_step"]
                     start_epoch = checkpoint_data["epoch"]
-                    best_f1 = checkpoint_data["best_f1"]
+                    #best_f1 = checkpoint_data["best_f1"]
                     logger.info(
                         f"Resumed training from step {global_step}, epoch {start_epoch}, best_f1: {best_f1:.4f}"
                     )
@@ -431,7 +431,7 @@ class LayerwisePredictorTrainer:
                         )
                         global_step = 0
                         start_epoch = 0
-                        best_f1 = 0.0
+                        #best_f1 = 0.0
                     else:
                         logger.warning(
                             f"Failed to load checkpoint: {e}. Skipping training."
@@ -508,7 +508,6 @@ class LayerwisePredictorTrainer:
                         epoch,
                         optimizer,
                         scheduler,
-                        best_f1,
                         loss.item(),
                     )
 
@@ -536,12 +535,19 @@ class LayerwisePredictorTrainer:
                     }
                 )
 
-            # Save best model
-            if eval_metrics["f1"] > best_f1:
-                best_f1 = eval_metrics["f1"]
-                # Save the best model immediately
-                if save_dir:
-                    best_model_name = f"best_predictor_layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%"
+            # Save best model among all lora models for the given layer
+            if save_dir:
+                f1_path = os.path.join(save_dir, f"f1_store.pt")   
+                f1_store = torch.load(f1_path)
+                
+                best_f1 = f1_store[self.layer_idx] if self.layer_idx in f1_store else 0.0
+
+                if eval_metrics["f1"] > best_f1:
+                    f1_store[self.layer_idx] = eval_metrics["f1"]
+                    torch.save(f1_store, f1_path)
+                    
+                    # Save best model
+                    best_model_name = f"best_predictor_layer_{self.layer_idx}"
                     self.save_predictor(save_dir, name=best_model_name)
                     logger.info(f"Saved new best model: {best_model_name}")
 
@@ -549,7 +555,7 @@ class LayerwisePredictorTrainer:
                     if use_wandb:
                         wandb.log(
                             {
-                                f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/best_f1": best_f1,
+                                f"layer_{self.layer_idx}/best_f1": best_f1,
                                 "epoch": epoch + 1,
                             }
                         )
@@ -575,7 +581,6 @@ class LayerwisePredictorTrainer:
         epoch: int,
         optimizer: torch.optim.Optimizer,
         scheduler,
-        best_f1: float,
         loss: float,
     ):
         """Save training checkpoint with full state."""
@@ -587,7 +592,6 @@ class LayerwisePredictorTrainer:
             "predictor_state_dict": self.predictor.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
-            "best_f1": best_f1,
             "loss": loss,
             "layer_idx": self.layer_idx,
             "lora_pct": self.lora_pct,
@@ -785,6 +789,7 @@ class MultiLayerPredictorTrainer:
         resume_from_checkpoint: bool = False,
         checkpoint_path: Optional[str] = None,
         restart_if_missing: bool = False,
+        load_best_only: bool = False,
         seed: int = 42,
     ):
         """Train predictors for all specified layers."""
@@ -809,69 +814,32 @@ class MultiLayerPredictorTrainer:
             [train_size, val_size],
             generator=torch.Generator().manual_seed(seed),
         )
-        # Train each layer with each LoRA size (hyperparameter grid)
-        for lora_size, lora_pct in zip(self.lora_sizes, self.lora_size_percentages):
-            logger.info(f"Training with LoRA size {lora_size} ({lora_pct:.1f}%)")
 
-            for layer_idx in self.layer_indices:
-                final_checkpoint = (
-                    f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
-                )
-                if os.path.exists(final_checkpoint):
-                    logger.info(
-                        f"Final checkpoint for layer {layer_idx} with LoRA size {lora_size} found. Skipping training..."
-                    )
+        f1_path = os.path.join(save_dir, "f1_store.pt") # This should be replaced by something more sophisticated like an LMDB
+        if not os.path.exists(f1_path):
+            torch.save({
+                layer_idx: 0.0 for layer_idx in self.layer_indices
+            })
+
+        for layer_idx in self.layer_indices:
+            logger.info(f"Training layer {layer_idx}...")
+
+            # Train only from best lora predictor
+            if load_best_only:
+                best_checkpoint_path = "best_predictor_layer_{self.layer_idx}.pt"
+                if not os.path.exists(best_checkpoint_path):
+                    logger.warning(f"Best checkpoint for layer {layer_idx} not found. Skipping to next layer.")
                     continue
+                best_checkpoint = torch.load(best_checkpoint_path)
+                lora_pct = best_checkpoint["lora_pct"]
+                del best_checkpoint
 
-                logger.info(
-                    f"Starting training for layer {layer_idx} with LoRA size {lora_size}"
-                )
+                lora_size = self.intermediate_size * lora_pct / 100
 
-                # Get or create trainer for this layer and LoRA size
-                trainer_key = (layer_idx, lora_size)
-                if trainer_key not in self.layer_trainers:
-                    self.layer_trainers[trainer_key] = LayerwisePredictorTrainer(
-                        layer_idx=layer_idx,
-                        hidden_size=self.hidden_size,
-                        intermediate_size=self.intermediate_size,
-                        lora_size=lora_size,
-                        device=self.device,
-                    )
-
-                trainer = self.layer_trainers[trainer_key]
-
-                # Switch shared dataset to current layer
-                logger.info(f"Switching shared dataset to layer {layer_idx}")
-                self.shared_dataset.set_layer(layer_idx)
-
-                logger.info(
-                    f"Layer {layer_idx}, LoRA {lora_pct:.1f}%: Using {len(train_dataset)} training samples, {len(val_dataset)} validation samples"
-                )
-
-                # Determine checkpoint path for this layer if resuming
-                layer_checkpoint_path = None
-                if resume_from_checkpoint:
-                    if checkpoint_path:
-                        # If specific checkpoint path provided, use it only for the matching layer
-                        if f"layer_{layer_idx}" in checkpoint_path:
-                            layer_checkpoint_path = checkpoint_path
-                    else:
-                        # Look for latest checkpoint for this layer
-                        layer_checkpoint_path = (
-                            None  # Let trainer find latest automatically
-                        )
-
-                # Update wandb to include LoRA size if using wandb
-                if use_wandb:
-                    wandb.log(
-                        {
-                            f"layer_{layer_idx}_lora_{lora_pct:.1f}%/lora_size": lora_size,
-                            f"layer_{layer_idx}_lora_{lora_pct:.1f}%/lora_pct": lora_pct,
-                        }
-                    )
-
-                # Train predictor for this layer
-                trainer.train_layer(
+                self._train_layer(
+                    layer_idx=layer_idx,
+                    lora_pct=lora_pct,
+                    lora_size=lora_size,
                     train_dataset=train_dataset,
                     val_dataset=val_dataset,
                     num_epochs=num_epochs,
@@ -881,24 +849,133 @@ class MultiLayerPredictorTrainer:
                     save_dir=save_dir,
                     save_interval=save_interval,
                     resume_from_checkpoint=resume_from_checkpoint,
-                    checkpoint_path=layer_checkpoint_path,
+                    checkpoint_path=checkpoint_path,
                     restart_if_missing=restart_if_missing
                 )
+            else:
+                # Train each layer with each LoRA size (hyperparameter grid)
+                for lora_size, lora_pct in zip(self.lora_sizes, self.lora_size_percentages):
+                    logger.info(f"Training with LoRA size {lora_size} ({lora_pct:.1f}%)")
 
-                # Save final predictor for this layer and LoRA size
-                if save_dir:
-                    model_name = (
-                        f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
+                    self._train_layer(
+                        layer_idx=layer_idx,
+                        lora_pct=lora_pct,
+                        lora_size=lora_size,
+                        train_dataset=train_dataset,
+                        val_dataset=val_dataset,
+                        num_epochs=num_epochs,
+                        batch_size=batch_size,
+                        learning_rate=learning_rate,
+                        use_wandb=use_wandb,
+                        save_dir=save_dir,
+                        save_interval=save_interval,
+                        resume_from_checkpoint=resume_from_checkpoint,
+                        checkpoint_path=checkpoint_path,
+                        restart_if_missing=restart_if_missing
                     )
-                    trainer.save_predictor(save_dir, name=model_name)
-                    logger.info(f"Saved final predictor: {model_name}")
-
-                logger.info(
-                    f"Completed training for layer {layer_idx} with LoRA size {lora_size}"
-                )
 
         logger.info(
             f"Completed all training - {len(self.layer_indices)} layers × {len(self.lora_sizes)} LoRA sizes = {len(self.layer_indices) * len(self.lora_sizes)} total experiments"
+        )
+
+    def _train_layer(
+        self,
+        layer_idx: int,
+        lora_pct: float,
+        lora_size: int,
+        train_dataset, 
+        val_dataset,
+        num_epochs: int,
+        batch_size: int,
+        learning_rate: float,
+        use_wandb: bool = False,
+        save_dir: Optional[str] = None,
+        save_interval: int = 1000,
+        resume_from_checkpoint: bool = False,
+        checkpoint_path: Optional[str] = None,
+        restart_if_missing: bool = False,
+    ):
+        final_checkpoint = (
+            f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
+        )
+        if os.path.exists(final_checkpoint):
+            logger.info(
+                f"Final checkpoint for layer {layer_idx} with LoRA size {lora_size} found. Skipping training..."
+            )
+            return
+
+        logger.info(
+            f"Starting training for layer {layer_idx} with LoRA size {lora_size}"
+        )
+
+        # Get or create trainer for this layer and LoRA size
+        trainer_key = (layer_idx, lora_size)
+        if trainer_key not in self.layer_trainers:
+            self.layer_trainers[trainer_key] = LayerwisePredictorTrainer(
+                layer_idx=layer_idx,
+                hidden_size=self.hidden_size,
+                intermediate_size=self.intermediate_size,
+                lora_size=lora_size,
+                device=self.device,
+            )
+
+        trainer = self.layer_trainers[trainer_key]
+
+        # Switch shared dataset to current layer
+        logger.info(f"Switching shared dataset to layer {layer_idx}")
+        self.shared_dataset.set_layer(layer_idx)
+
+        logger.info(
+            f"Layer {layer_idx}, LoRA {lora_pct:.1f}%: Using {len(train_dataset)} training samples, {len(val_dataset)} validation samples"
+        )
+
+        # Determine checkpoint path for this layer if resuming
+        layer_checkpoint_path = None
+        if resume_from_checkpoint:
+            if checkpoint_path:
+                # If specific checkpoint path provided, use it only for the matching layer
+                if f"layer_{layer_idx}" in checkpoint_path:
+                    layer_checkpoint_path = checkpoint_path
+            else:
+                # Look for latest checkpoint for this layer
+                layer_checkpoint_path = (
+                    None  # Let trainer find latest automatically
+                )
+
+        # Update wandb to include LoRA size if using wandb
+        if use_wandb:
+            wandb.log(
+                {
+                    f"layer_{layer_idx}_lora_{lora_pct:.1f}%/lora_size": lora_size,
+                    f"layer_{layer_idx}_lora_{lora_pct:.1f}%/lora_pct": lora_pct,
+                }
+            )
+
+        # Train predictor for this layer
+        trainer.train_layer(
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
+            num_epochs=num_epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            use_wandb=use_wandb,
+            save_dir=save_dir,
+            save_interval=save_interval,
+            resume_from_checkpoint=resume_from_checkpoint,
+            checkpoint_path=layer_checkpoint_path,
+            restart_if_missing=restart_if_missing
+        )
+
+        # Save final predictor for this layer and LoRA size
+        if save_dir:
+            model_name = (
+                f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
+            )
+            trainer.save_predictor(save_dir, name=model_name)
+            logger.info(f"Saved final predictor: {model_name}")
+
+        logger.info(
+            f"Completed training for layer {layer_idx} with LoRA size {lora_size}"
         )
 
     def save_all_predictors(self, save_dir: str):
