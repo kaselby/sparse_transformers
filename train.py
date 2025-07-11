@@ -108,6 +108,7 @@ def main():
     parser.add_argument("--checkpoint_save_interval", type=int, default=20000, help="Save checkpoint every N steps")
     parser.add_argument("--resume_from_checkpoint", action="store_true", help="Resume training from the latest checkpoint")
     parser.add_argument("--checkpoint_path", type=str, default=None, help="Specific checkpoint path to resume from (optional)")
+    parser.add_argument("--restart_if_missing", action="store_true", help="Restart training from scratch if correct checkpoint not found.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--use_wandb", action="store_true", help="Use Weights & Biases logging")
     parser.add_argument("--wandb_project", type=str, default="llama-skip-predictors", help="W&B project name")

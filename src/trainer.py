@@ -248,12 +248,14 @@ class LayerwisePredictorTrainer:
         hidden_size: int,
         intermediate_size: int,
         lora_size: int,
+        lora_pct: float,
         device: torch.device,
     ):
         self.device = device
         self.layer_idx = layer_idx
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
+        self.lora_pct = lora_pct
 
         # Initialize predictors for each layer
         self.predictor = FastLoRAProjection(
@@ -348,6 +350,7 @@ class LayerwisePredictorTrainer:
         save_interval: int = 1000,
         resume_from_checkpoint: bool = False,
         checkpoint_path: Optional[str] = None,
+        restart_if_missing = False
     ) -> FastLoRAProjection:
         """Train a single layer's predictor.
 
@@ -422,12 +425,18 @@ class LayerwisePredictorTrainer:
                         f"Resumed training from step {global_step}, epoch {start_epoch}, best_f1: {best_f1:.4f}"
                     )
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to load checkpoint: {e}. Starting fresh training."
-                    )
-                    global_step = 0
-                    start_epoch = 0
-                    best_f1 = 0.0
+                    if restart_if_missing:
+                        logger.warning(
+                            f"Failed to load checkpoint: {e}. Starting fresh training."
+                        )
+                        global_step = 0
+                        start_epoch = 0
+                        best_f1 = 0.0
+                    else:
+                        logger.warning(
+                            f"Failed to load checkpoint: {e}. Skipping training."
+                        )
+                        return None
             else:
                 logger.info("No checkpoint found. Starting fresh training.")
 
@@ -482,11 +491,11 @@ class LayerwisePredictorTrainer:
 
                     wandb.log(
                         {
-                            f"layer_{self.layer_idx}/train_loss": loss.item(),
-                            f"layer_{self.layer_idx}/learning_rate": scheduler.get_last_lr()[
+                            f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/train_loss": loss.item(),
+                            f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/learning_rate": scheduler.get_last_lr()[
                                 0
                             ],
-                            f"layer_{self.layer_idx}/gradient_norm": grad_norm,
+                            f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/gradient_norm": grad_norm,
                             "step": global_step,
                         }
                     )
@@ -509,16 +518,16 @@ class LayerwisePredictorTrainer:
             if use_wandb:
                 wandb.log(
                     {
-                        f"layer_{self.layer_idx}/eval_gt_sparsity": eval_metrics[
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_gt_sparsity": eval_metrics[
                             "gt_sparsity"
                         ],
-                        f"layer_{self.layer_idx}/eval_pred_sparsity": eval_metrics[
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_pred_sparsity": eval_metrics[
                             "pred_sparsity"
                         ],
-                        f"layer_{self.layer_idx}/eval_accuracy": eval_metrics[
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_accuracy": eval_metrics[
                             "accuracy"
                         ],
-                        f"layer_{self.layer_idx}/eval_precision": eval_metrics[
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_precision": eval_metrics[
                             "precision"
                         ],
                         f"layer_{self.layer_idx}/eval_recall": eval_metrics["recall"],
@@ -532,7 +541,7 @@ class LayerwisePredictorTrainer:
                 best_f1 = eval_metrics["f1"]
                 # Save the best model immediately
                 if save_dir:
-                    best_model_name = f"best_predictor_layer_{self.layer_idx}"
+                    best_model_name = f"best_predictor_layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%"
                     self.save_predictor(save_dir, name=best_model_name)
                     logger.info(f"Saved new best model: {best_model_name}")
 
@@ -540,7 +549,7 @@ class LayerwisePredictorTrainer:
                     if use_wandb:
                         wandb.log(
                             {
-                                f"layer_{self.layer_idx}/best_f1": best_f1,
+                                f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/best_f1": best_f1,
                                 "epoch": epoch + 1,
                             }
                         )
@@ -581,6 +590,7 @@ class LayerwisePredictorTrainer:
             "best_f1": best_f1,
             "loss": loss,
             "layer_idx": self.layer_idx,
+            "lora_pct": self.lora_pct,
             "hidden_size": self.hidden_size,
             "intermediate_size": self.intermediate_size,
         }
@@ -607,6 +617,9 @@ class LayerwisePredictorTrainer:
 
         logger.info(f"Loading checkpoint from {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        if checkpoint["lora_pct"] != self.lora_pct:
+            raise AssertionError(f"Mismatching LoRA size found: expected {self.lora_pct}% but found {checkpoint["lora_pct"]}%.")
 
         # Load predictor state
         self.predictor.load_state_dict(checkpoint["predictor_state_dict"])
@@ -771,6 +784,7 @@ class MultiLayerPredictorTrainer:
         save_interval: int = 1000,
         resume_from_checkpoint: bool = False,
         checkpoint_path: Optional[str] = None,
+        restart_if_missing: bool = False,
         seed: int = 42,
     ):
         """Train predictors for all specified layers."""
@@ -800,6 +814,15 @@ class MultiLayerPredictorTrainer:
             logger.info(f"Training with LoRA size {lora_size} ({lora_pct:.1f}%)")
 
             for layer_idx in self.layer_indices:
+                final_checkpoint = (
+                    f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
+                )
+                if os.path.exists(final_checkpoint):
+                    logger.info(
+                        f"Final checkpoint for layer {layer_idx} with LoRA size {lora_size} found. Skipping training..."
+                    )
+                    continue
+
                 logger.info(
                     f"Starting training for layer {layer_idx} with LoRA size {lora_size}"
                 )
@@ -859,6 +882,7 @@ class MultiLayerPredictorTrainer:
                     save_interval=save_interval,
                     resume_from_checkpoint=resume_from_checkpoint,
                     checkpoint_path=layer_checkpoint_path,
+                    restart_if_missing=restart_if_missing
                 )
 
                 # Save final predictor for this layer and LoRA size
