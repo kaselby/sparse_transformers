@@ -422,7 +422,7 @@ class LayerwisePredictorTrainer:
                     start_epoch = checkpoint_data["epoch"]
                     #best_f1 = checkpoint_data["best_f1"]
                     logger.info(
-                        f"Resumed training from step {global_step}, epoch {start_epoch}, best_f1: {best_f1:.4f}"
+                        f"Resumed training from step {global_step}, epoch {start_epoch}"
                     )
                 except Exception as e:
                     if restart_if_missing:
@@ -543,7 +543,8 @@ class LayerwisePredictorTrainer:
                 best_f1 = f1_store[self.layer_idx] if self.layer_idx in f1_store else 0.0
 
                 if eval_metrics["f1"] > best_f1:
-                    f1_store[self.layer_idx] = eval_metrics["f1"]
+                    best_f1 = eval_metrics["f1"]
+                    f1_store[self.layer_idx] = best_f1
                     torch.save(f1_store, f1_path)
                     
                     # Save best model
@@ -562,6 +563,14 @@ class LayerwisePredictorTrainer:
 
         # Close progress bar
         progress_bar.close()
+
+        # Save final predictor for this layer and LoRA size
+        if save_dir:
+            model_name = (
+                f"final_predictor_layer_{self.layer_idx}_lora_{self.lora_pct:.1f}pct"
+            )
+            self.save_predictor(save_dir, name=model_name)
+            logger.info(f"Saved final predictor: {model_name}")
 
         return self.predictor  # type: ignore
 
@@ -623,7 +632,7 @@ class LayerwisePredictorTrainer:
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
         if checkpoint["lora_pct"] != self.lora_pct:
-            raise AssertionError(f"Mismatching LoRA size found: expected {self.lora_pct}% but found {checkpoint["lora_pct"]}%.")
+            raise AssertionError(f"Mismatched LoRA size found: expected {self.lora_pct}% but found {checkpoint['lora_pct']}%.")
 
         # Load predictor state
         self.predictor.load_state_dict(checkpoint["predictor_state_dict"])
@@ -636,7 +645,6 @@ class LayerwisePredictorTrainer:
         return {
             "global_step": checkpoint["global_step"],
             "epoch": checkpoint["epoch"],
-            "best_f1": checkpoint["best_f1"],
             "loss": checkpoint["loss"],
         }
 
@@ -819,7 +827,7 @@ class MultiLayerPredictorTrainer:
         if not os.path.exists(f1_path):
             torch.save({
                 layer_idx: 0.0 for layer_idx in self.layer_indices
-            })
+            }, f1_path)
 
         for layer_idx in self.layer_indices:
             logger.info(f"Training layer {layer_idx}...")
@@ -916,6 +924,7 @@ class MultiLayerPredictorTrainer:
                 hidden_size=self.hidden_size,
                 intermediate_size=self.intermediate_size,
                 lora_size=lora_size,
+                lora_pct=lora_pct,
                 device=self.device,
             )
 
@@ -965,14 +974,6 @@ class MultiLayerPredictorTrainer:
             checkpoint_path=layer_checkpoint_path,
             restart_if_missing=restart_if_missing
         )
-
-        # Save final predictor for this layer and LoRA size
-        if save_dir:
-            model_name = (
-                f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
-            )
-            trainer.save_predictor(save_dir, name=model_name)
-            logger.info(f"Saved final predictor: {model_name}")
 
         logger.info(
             f"Completed training for layer {layer_idx} with LoRA size {lora_size}"
