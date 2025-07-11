@@ -350,7 +350,6 @@ class LayerwisePredictorTrainer:
         save_interval: int = 1000,
         resume_from_checkpoint: bool = False,
         checkpoint_path: Optional[str] = None,
-        restart_if_missing = False
     ) -> FastLoRAProjection:
         """Train a single layer's predictor.
 
@@ -424,19 +423,18 @@ class LayerwisePredictorTrainer:
                     logger.info(
                         f"Resumed training from step {global_step}, epoch {start_epoch}"
                     )
-                except Exception as e:
-                    if restart_if_missing:
-                        logger.warning(
-                            f"Failed to load checkpoint: {e}. Starting fresh training."
-                        )
-                        global_step = 0
-                        start_epoch = 0
-                        #best_f1 = 0.0
-                    else:
-                        logger.warning(
-                            f"Failed to load checkpoint: {e}. Skipping training."
-                        )
-                        return None
+                except FileNotFoundError as e:
+                    logger.warning(
+                        f"Failed to load checkpoint: {e}. Starting fresh training."
+                    )
+                    global_step = 0
+                    start_epoch = 0
+                    #best_f1 = 0.0
+                except AssertionError as e:
+                    logger.warning(
+                        f"Failed to load checkpoint: {e}. Skipping training."
+                    )
+                    return None
             else:
                 logger.info("No checkpoint found. Starting fresh training.")
 
@@ -796,7 +794,6 @@ class MultiLayerPredictorTrainer:
         save_interval: int = 1000,
         resume_from_checkpoint: bool = False,
         checkpoint_path: Optional[str] = None,
-        restart_if_missing: bool = False,
         load_best_only: bool = False,
         seed: int = 42,
     ):
@@ -857,8 +854,7 @@ class MultiLayerPredictorTrainer:
                     save_dir=save_dir,
                     save_interval=save_interval,
                     resume_from_checkpoint=resume_from_checkpoint,
-                    checkpoint_path=checkpoint_path,
-                    restart_if_missing=restart_if_missing
+                    checkpoint_path=checkpoint_path
                 )
             else:
                 # Train each layer with each LoRA size (hyperparameter grid)
@@ -878,8 +874,7 @@ class MultiLayerPredictorTrainer:
                         save_dir=save_dir,
                         save_interval=save_interval,
                         resume_from_checkpoint=resume_from_checkpoint,
-                        checkpoint_path=checkpoint_path,
-                        restart_if_missing=restart_if_missing
+                        checkpoint_path=checkpoint_path
                     )
 
         logger.info(
@@ -900,8 +895,7 @@ class MultiLayerPredictorTrainer:
         save_dir: Optional[str] = None,
         save_interval: int = 1000,
         resume_from_checkpoint: bool = False,
-        checkpoint_path: Optional[str] = None,
-        restart_if_missing: bool = False,
+        checkpoint_path: Optional[str] = None
     ):
         final_checkpoint = (
             f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
@@ -971,8 +965,7 @@ class MultiLayerPredictorTrainer:
             save_dir=save_dir,
             save_interval=save_interval,
             resume_from_checkpoint=resume_from_checkpoint,
-            checkpoint_path=layer_checkpoint_path,
-            restart_if_missing=restart_if_missing
+            checkpoint_path=layer_checkpoint_path
         )
 
         logger.info(
