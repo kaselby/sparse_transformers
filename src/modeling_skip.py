@@ -118,20 +118,24 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
 
         self._init_components(config, layer_idx)
 
+        # Check if this is a training configuration
+        is_training_config = getattr(config, 'training', False)
+        is_sparse_layer = layer_idx in config.sp_layers if hasattr(config, 'sp_layers') and config.sp_layers != "all" else True
+        self.is_sparse = is_sparse_layer and not is_training_config
+
         intermediate_size = config.intermediate_size[layer_idx] if isinstance(config.intermediate_size, list) \
             else config.intermediate_size
-        lora_pct = 0.04 if not hasattr(config, "lora_size") else config.lora_size
-        self.lora_size = int(intermediate_size * lora_pct)
-        self.mlp_lora_proj = FastLoRAProjection(
-            config.hidden_size, 
-            intermediate_size,
-            self.lora_size
-        )
+        if self.is_sparse:
+            lora_pct = 0.04 if not hasattr(config, "lora_size") else config.lora_size
+            self.lora_size = int(intermediate_size * lora_pct)
+            self.mlp_lora_proj = FastLoRAProjection(
+                config.hidden_size, 
+                intermediate_size,
+                self.lora_size
+            )
         
-        # Check if this is a training configuration
-        self.is_training_config = getattr(config, 'training', False)
         # Only initialize predictor training components if explicitly enabled
-        if self.is_training_config:
+        if not self.is_sparse:
             # Standard MLP for ground truth collection during training
             self._set_mlp_train(config, layer_idx)
         else:
@@ -175,7 +179,7 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)  # type: ignore
-        if not self.training:  # Use PyTorch's built-in training flag
+        if self.is_sparse:  # Use PyTorch's built-in training flag
             self._compute_binary_mask(hidden_states)
           
         # Self Attention
@@ -218,6 +222,8 @@ def build_skip_connection_model(pretrained_model_class: type[PreTrainedModel]) -
             self.vocab_size = config.vocab_size
 
             self._init_components(config)
+            self.sp_layers = config.sp_layers if hasattr(config, 'sp_layers') and config.sp_layers != "all" else list(range(self.layers))
+            
             self.gradient_checkpointing = False
             # Initialize weights and apply final processing
             self.post_init()
@@ -235,7 +241,8 @@ def build_skip_connection_model(pretrained_model_class: type[PreTrainedModel]) -
         def get_predictor_parameters(self):
             """Get parameters of all predictor networks for optimization."""
             predictor_params = []
-            for layer in self.layers:
+            for layer_idx in self.sp_layers:
+                layer = self.layers[layer_idx]
                 predictor_params.extend(layer.mlp_lora_proj.parameters())
             return predictor_params
         
@@ -245,7 +252,8 @@ def build_skip_connection_model(pretrained_model_class: type[PreTrainedModel]) -
             for param in self.parameters():
                 param.requires_grad = False
 
-            for layer in self.layers:
+            for layer_idx in self.sp_layers:
+                layer = self.layers[layer_idx]
                 # Keep predictor parameters trainable
                 for param in layer.mlp_lora_proj.parameters():
                     param.requires_grad = True
@@ -426,7 +434,8 @@ def build_skip_connection_model_for_causal_lm(pretrained_model_class: type[PreTr
 
         def reset_cache(self):
             """Reset cache of all layers."""
-            for layer in self.model.layers:  # type: ignore
+            for layer_idx in self.model.sp_layers:  # type: ignore
+                layer = self.model.layers[layer_idx]
                 layer.mlp.weight_cache = None  # type: ignore
                 layer.mlp.initialize_weight_cache()  # type: ignore
 
