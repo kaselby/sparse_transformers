@@ -7,6 +7,7 @@ import argparse
 
 from datasets import load_dataset
 import torch
+from torch.utils.data import DataLoader as TorchDataLoader
 from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
 from transformers.trainer_utils import set_seed
 
@@ -16,39 +17,173 @@ from src.activation_capture import ActivationCapture, Hook
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def calculate_threshold_one_token(neuron_outputs, cett_target, n_quantiles=1000):
-    norms = neuron_outputs.norm(dim=0)
-    quantiles = norms.quantile(torch.linspace(0,1,n_quantiles))
-    tot_norm = neuron_outputs.sum(dim=1).norm()
 
-    def CETT(threshold):
-        threshold_norm = ((norms < threshold) * neuron_outputs).sum(dim=1).norm()
-        return threshold_norm / tot_norm
+import copy
+class ThresholdEvaluator():
+    def __init__(self, model, thresholds):
+        self.model = model
+        self.thresholds = thresholds
 
+        self.compute_neuron_thresholds(thresholds)
+
+        self.mlp_outputs = defaultdict(list)
+        self.handles = []
+
+    def get_layers(self):
+        return self.model.model.layers
+
+    def compute_neuron_thresholds(self, thresholds):
+        n_layers = len(self.get_layers())
+        self.neuron_thresholds = torch.zeros(n_layers, self.model.config.intermediate_size)
+        with torch.no_grad():
+            for layer_idx, layer in self.get_layers():
+                norms = layer.mlp.down_proj.weight.norm(dim=0)
+                self.neuron_thresholds[layer_idx] = thresholds[layer_idx] * norms
+
+    def _inspect_hook(self, layer_idx):
+        def hook(module, input, output):
+            # Just detach, don't clone or move to CPU yet
+            out = output.view(-1, output.size(-1)).clone().detach()
+            self.mlp_outputs[layer_idx].append(out)
+            return output
+        return hook
+    
+    def _threshold_hook(self, layer_idx):
+        def hook(module, input, output):
+            # Just detach, don't clone or move to CPU yet
+            mask = (output > self.neuron_thresholds[layer_idx]).bool()
+            return output * mask
+        return hook
+    
+    def apply_thresholds(self):
+        for layer_idx, layer in enumerate(self.get_layers()):
+            handle = layer.mlp.act_fn.register_forward_hook(
+                self._threshold_hook(layer_idx)
+            )
+            self.handles.append(handle)
+
+    def apply_hooks(self):
+        for layer_idx, layer in enumerate(self.get_layers()):
+            handle = layer.mlp.register_forward_hook(
+                self._inspect_hook(layer_idx)
+            )
+            self.handles.append(handle)
+
+    def clear_captures(self):
+        self.mlp_outputs = defaultdict(list)
+
+    def remove_hooks(self):
+        for handle in self.handles:
+            handle.remove()
+        self.handles = []
+
+    def evaluate(self, inputs):
+        self.apply_hooks()
+                
+        with torch.no_grad():
+            for inp in inputs:
+                _ = self.model(**inp)
+        
+        ground_truth_outputs = {
+            idx: torch.cat(outputs_idx, dim=0) for idx,outputs_idx in self.mlp_outputs
+        }
+        self.clear_captures()
+
+        self.apply_thresholds()
+        with torch.no_grad():
+            for inp in inputs:
+                _ = self.model(**inp)
+
+        threshold_outputs = {
+            idx: torch.cat(outputs_idx, dim=0) for idx,outputs_idx in self.mlp_outputs
+        }
+        self.clear_captures()
+
+
+
+#
+#   TODO:
+#       1. Test out precomputing down_proj norms and see if that improves performance
+#       2. Ensure that the thresholds lead to reasonable results for downstream evaluation
+#
+#
+
+
+
+
+def cett_from_threshold(neuron_outputs, threshold, norms=None, tot_norm=None):
+    if not norms:   # pass both or neither
+        norms = norms = neuron_outputs.norm(dim=-2).unsqueeze(-2)
+        tot_norm = neuron_outputs.sum(dim=-1).norm(dim=-1)
+    threshold_norm = ((norms < threshold) * neuron_outputs).sum(dim=-1).norm(dim=-1)
+    return threshold_norm / tot_norm
+
+'''
+def calculate_threshold_by_token(neuron_outputs, cett_target, n_thresholds=10000):
+    neuron_outputs = neuron_outputs.view(-1, *neuron_outputs.size()[-2:])
+    norms = neuron_outputs.norm(dim=-2).unsqueeze(-2)
+    min_value = norms.min()
+    max_value = norms.quantile(0.99)
+    threshold_grid = torch.linspace(min_value, max_value, n_thresholds)
+    tot_norm = neuron_outputs.sum(dim=-1).norm(dim=-1)
+    thresholds = torch.zeros(neuron_outputs.size(0))
+    
+    initial_cett = cett_from_threshold(neuron_outputs, max_value, norms=norms, tot_norm=tot_norm)
+    thresholds[initial_cett < cett_target] = max_value
+    
+    for j in tqdm(range(neuron_outputs.size(0))):
+        if thresholds[j] == 0:
+            left = 0
+            right = n_thresholds
+            while left < right:
+                mid = (left + right) // 2
+                cett = cett_from_threshold(neuron_outputs[j], threshold_grid[mid], norms=norms[j], tot_norm=tot_norm[j])
+                if cett <= cett_target:
+                    left = mid + 1
+                else:
+                    right = mid
+            thresholds[j] = threshold_grid[left]
+    return thresholds
+'''
+        
+def calculate_threshold(neuron_outputs, cett_target, n_thresholds=10000):
+    neuron_outputs = neuron_outputs.view(-1, *neuron_outputs.size()[-2:])
+    norms = neuron_outputs.norm(dim=-2).unsqueeze(-2)
+    tot_norm = neuron_outputs.sum(dim=-1).norm(dim=-1)
+    
+    min_value = norms.min()
+    max_value = norms.quantile(0.99)
+    threshold_grid = torch.linspace(min_value, max_value, n_thresholds)
+    #initial_cett = cett_from_threshold(neuron_outputs, max_value, norms=norms, tot_norm=tot_norm)
+    #outlier_mask = initial_cett > cett_target
+    
     left = 0
-    right = quantiles.size(0)
-    threshold = 0
+    right = n_thresholds
     while left < right:
+        print(left,right)
         mid = (left + right) // 2
-        cett = CETT(quantiles[mid])
+        #cett = cett_from_threshold(neuron_outputs, threshold_grid[mid], norms=norms, tot_norm=tot_norm)[outlier_mask].mean()
+        cett = cett_from_threshold(neuron_outputs, threshold_grid[mid], norms=norms, tot_norm=tot_norm).mean()
         if cett <= cett_target:
             left = mid + 1
-            threshold = quantiles[mid]
         else:
-            right = mid - 1
-    return threshold
+            right = mid
+    return threshold_grid[left]
 
 
 def find_thresholds(
         model_name: str, 
         dataset_name: str, 
         dataset_config: str,
-        max_samples: int, 
-        cett_target: float, 
-        n_quantiles: int,
         save_path: str,
-        seed: int,
-        device: torch.device,
+        batch_size: int = 8,
+        max_samples: int = 128, 
+        max_length: int = 256,
+        cett_target: float = 0.2, 
+        n_thresholds: int = 10000,
+        num_workers: int = 8,
+        seed: int = 42,
+        device: torch.device = torch.device("cpu"),
     ):
 
     # Load tokenizer and model
@@ -82,19 +217,24 @@ def find_thresholds(
     def sample_and_tokenize(examples):
         """Sample text chunks before tokenization for efficiency using vectorized operations."""
         texts = examples["text"]
-        tokenized = tokenizer(texts, return_tensors="pt")
+        tokenized = tokenizer(
+            texts, 
+            max_length=max_length,
+            truncation=True,
+            return_tensors="pt"
+        )
 
         # Convert to lists
         return {
-            "text": texts,
             "input_ids": tokenized["input_ids"],
+            "attention_mask": tokenized["attention_mask"]
         }
 
     # Tokenize
     dataset = dataset.take(max_samples).map(sample_and_tokenize, batched=False)
     dataset = dataset.with_format("torch")
 
-    dataloader = TorchDataLoader(dataset, batch_size=1, num_workers=8, pin_memory=False, prefetch_factor=2)  # type: ignore
+    dataloader = TorchDataLoader(dataset, batch_size=1, num_workers=num_workers, pin_memory=False, prefetch_factor=2)  # type: ignore
 
     # Compute thresholds for each layer across all dataset entries
     logger.info(f"Beginning to compute thresholds using {max_samples} samples")
@@ -102,17 +242,16 @@ def find_thresholds(
     with torch.no_grad():
         for batch in tqdm(dataloader, total=max_samples):
             input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
         
-            _ = model(input_ids.squeeze(0))
+            _ = model(input_ids=input_ids.squeeze(0), attention_mask=attention_mask.squeeze(0))
 
             for layer_idx, layer in enumerate(model.activation_capture.get_layers()):
+                down_weight = layer.mlp.down_proj.weight
                 activations = model.activation_capture.mlp_activations[Hook.UP][layer_idx]
-                activations = activations.view(-1, activations.size(-1))
-
-                for i in range(activations.size(0)):
-                    neuron_outputs = activations[i] * layer.mlp.down_proj.weight
-                    threshold = calculate_threshold_one_token(neuron_outputs, cett_target=cett_target, n_quantiles=n_quantiles)
-                    thresholds[layer_idx].append(threshold)
+                neuron_outputs = activations.unsqueeze(-2) * down_weight
+                threshold = calculate_threshold(neuron_outputs, cett_target, n_thresholds)
+                thresholds[layer_idx].append(threshold)
             
             model.activation_capture.clear_captures()
             if device.type == "cuda":
