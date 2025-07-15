@@ -53,7 +53,8 @@ def main():
         config = AutoConfig.from_pretrained(args.model_name_or_config)
         config.lora_size = args.lora_size / 100.0
         model = AutoModelForCausalLM.from_pretrained(config._name_or_path, config=config)
-        for layer_idx, layer in enumerate(model.get_decoder().layers):
+        for layer_idx in model.get_decoder().sp_layers:
+            layer = model.get_decoder().layers[layer_idx]
             layer_path = os.path.join(args.sp_dir, f"final_predictor_layer_{layer_idx}_lora_{args.lora_size}pct.pt")
             if not os.path.exists(layer_path):
                 logger.error(f"Pretrained weights for sparse predictor at layer {layer_idx} do not exist.")
