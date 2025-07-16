@@ -237,6 +237,14 @@ class StreamingSparsityDataset(TorchDataset):
                 "max_cache_size": _chunk_cache.max_size,
                 "cache_type": "chunk_cache",
             }
+        
+    def set_layer_idx(self, layer_idx):
+        self.layer_idx = layer_idx
+        if self.load_full_dataset:
+            logger.info("Layer index changed with load_full_dataset=True. Reloading full dataset for new layer index...")
+            self.clear_cache()
+            self._load_full_data()
+            logger.info(f"Full dataset loaded into memory for layer {layer_idx}")
 
 
 class LayerwisePredictorTrainer:
@@ -710,7 +718,7 @@ class LayerAdaptiveDataset(TorchDataset):
     def set_layer(self, layer_idx: int):
         """Switch to a different layer for data access."""
         self.current_layer_idx = layer_idx
-        self.base_dataset.layer_idx = layer_idx
+        self.base_dataset.set_layer_idx(layer_idx)
 
     def __len__(self):
         return len(self.base_dataset)
