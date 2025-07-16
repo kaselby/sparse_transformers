@@ -623,7 +623,7 @@ class LayerwisePredictorTrainer:
 
         # Also save as latest checkpoint
         latest_path = os.path.join(
-            save_dir, f"latest_checkpoint_layer_{self.layer_idx}.pt"
+            save_dir, f"latest_checkpoint_layer_{self.layer_idx}_lora_{self.lora_pct:.1f}pct.pt"
         )
         torch.save(checkpoint, latest_path)
 
@@ -663,7 +663,7 @@ class LayerwisePredictorTrainer:
 
         # First try the latest checkpoint file
         latest_path = os.path.join(
-            save_dir, f"latest_checkpoint_layer_{self.layer_idx}.pt"
+            save_dir, f"latest_checkpoint_layer_{self.layer_idx}_lora_{self.lora_pct:.1f}pct.pt"
         )
         if os.path.exists(latest_path):
             return latest_path

@@ -1,6 +1,7 @@
 {
   "_name_or_path": "meta-llama/Llama-3.2-1B-Instruct",
   "sparsity": 0.3,
+  "sp_type": "llama",
   "training": true,
   "use_optimized_weight_cache": true,
   "return_dict": true,
