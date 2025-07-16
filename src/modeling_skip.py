@@ -50,6 +50,33 @@ class FastLoRAProjection(nn.Module):
    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.up(self.down(x))
+    
+
+class FastLoRAProjectionLlama(nn.Module):
+    def __init__(self, hidden_size, intermediate_size, lora_size):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.lora_size = lora_size
+        # Force creation of linear layers with actual tensors (not meta tensors)
+        self.down = nn.Linear(hidden_size, lora_size, bias=False)
+        self.up = nn.Linear(lora_size, intermediate_size, bias=False)
+        self.gate = nn.Linear(hidden_size, lora_size, bias=False)
+
+    def _fix_unloaded_weights(self):
+        out = self.to_empty(device="cpu")
+        self._init_weights()
+        return out
+
+    def _init_weights(self):
+        with torch.no_grad():
+            torch.nn.init.xavier_normal_(self.down.weight)
+            torch.nn.init.xavier_normal_(self.up.weight)
+            torch.nn.init.xavier_normal_(self.gate.weight)
+   
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.up(self.down(x) * self.gate(x))
+
                      
 class SkipMLP(nn.Module):
     def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float, bias: bool = False, act_fn="silu"):
@@ -123,23 +150,25 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         is_sparse_layer = layer_idx in config.sp_layers if hasattr(config, 'sp_layers') and config.sp_layers != "all" else True
         self.is_sparse = is_sparse_layer and not is_training_config
 
-        intermediate_size = config.intermediate_size[layer_idx] if isinstance(config.intermediate_size, list) \
-            else config.intermediate_size
-        if self.is_sparse:
-            lora_pct = 0.04 if not hasattr(config, "lora_size") else config.lora_size
-            self.lora_size = int(intermediate_size * lora_pct)
-            self.mlp_lora_proj = FastLoRAProjection(
-                config.hidden_size, 
-                intermediate_size,
-                self.lora_size
-            )
-        
         # Only initialize predictor training components if explicitly enabled
         if not self.is_sparse:
             # Standard MLP for ground truth collection during training
             self._set_mlp_train(config, layer_idx)
         else:
+            self._set_lora(config, layer_idx)
             self._set_mlp_inference(config, layer_idx)
+
+    def _set_lora(self, config, layer_idx):
+        intermediate_size = config.intermediate_size[layer_idx] if isinstance(config.intermediate_size, list) \
+            else config.intermediate_size
+        lora_pct = 0.04 if not hasattr(config, "lora_size") else config.lora_size
+        self.lora_size = int(intermediate_size * lora_pct)
+        lora_cls = FastLoRAProjection if not hasattr(config, 'sp_type') or config.sp_type == 'linear' else FastLoRAProjectionLlama
+        self.mlp_lora_proj = lora_cls(
+            config.hidden_size, 
+            intermediate_size,
+            self.lora_size
+        )
 
     @abstractmethod
     def _init_components(self, config, layer_idx):
