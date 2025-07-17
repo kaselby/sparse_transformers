@@ -905,14 +905,15 @@ class MultiLayerPredictorTrainer:
         resume_from_checkpoint: bool = False,
         checkpoint_path: Optional[str] = None
     ):
-        final_checkpoint = (
-            f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct.pt"
-        )
-        if os.path.exists(final_checkpoint):
-            logger.info(
-                f"Final checkpoint for layer {layer_idx} with LoRA size {lora_size} found. Skipping training..."
+        if save_dir:
+            final_checkpoint = (
+                f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct.pt"
             )
-            return
+            if os.path.exists(os.path.join(save_dir,final_checkpoint)):
+                logger.info(
+                    f"Final checkpoint for layer {layer_idx} with LoRA size {lora_size} found. Skipping training..."
+                )
+                return
 
         logger.info(
             f"Starting training for layer {layer_idx} with LoRA size {lora_size}"
