@@ -237,6 +237,16 @@ class StreamingSparsityDataset(TorchDataset):
                 "max_cache_size": _chunk_cache.max_size,
                 "cache_type": "chunk_cache",
             }
+        
+    def set_layer_idx(self, layer_idx):
+        if layer_idx == self.layer_idx:
+            return
+        self.layer_idx = layer_idx
+        if self.load_full_dataset:
+            logger.info("Layer index changed with load_full_dataset=True. Reloading full dataset for new layer index...")
+            self.clear_cache()
+            self._load_full_data()
+            logger.info(f"Full dataset loaded into memory for layer {layer_idx}")
 
 
 class LayerwisePredictorTrainer:
@@ -304,8 +314,8 @@ class LayerwisePredictorTrainer:
                 tp = (pred_mask * gt_mask).sum().item()
                 fp = (pred_mask * (~gt_mask)).sum().item()
                 fn = ((~pred_mask) * gt_mask).sum().item()
-                total_gt_sparsity += gt_mask.sum() / gt_mask.numel()
-                total_pred_sparsity += pred_mask.sum() / pred_mask.numel()
+                total_gt_sparsity += 1 - (gt_mask.sum() / gt_mask.numel())
+                total_pred_sparsity += 1 - (pred_mask.sum() / pred_mask.numel())
                 precision = tp / (tp + fp)
                 recall = tp / (tp + fn)
                 f1 = 2 * precision * recall / (precision + recall)
@@ -710,7 +720,7 @@ class LayerAdaptiveDataset(TorchDataset):
     def set_layer(self, layer_idx: int):
         """Switch to a different layer for data access."""
         self.current_layer_idx = layer_idx
-        self.base_dataset.layer_idx = layer_idx
+        self.base_dataset.set_layer_idx(layer_idx)
 
     def __len__(self):
         return len(self.base_dataset)
@@ -898,7 +908,7 @@ class MultiLayerPredictorTrainer:
         checkpoint_path: Optional[str] = None
     ):
         final_checkpoint = (
-            f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct"
+            f"final_predictor_layer_{layer_idx}_lora_{lora_pct:.1f}pct.pt"
         )
         if os.path.exists(final_checkpoint):
             logger.info(
