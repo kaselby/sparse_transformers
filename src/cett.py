@@ -18,6 +18,39 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# from https://github.com/pytorch/pytorch/issues/64947#issuecomment-2810054982
+def quantile(tensor, q, dim=None, keepdim=False):
+    """
+    Computes the quantile of the input tensor along the specified dimension.
+    
+    Parameters:
+    tensor (torch.Tensor): The input tensor.
+    q (float): The quantile to compute, should be a float between 0 and 1.
+    dim (int): The dimension to reduce. If None, the tensor is flattened.
+    keepdim (bool): Whether to keep the reduced dimension in the output.
+    Returns:
+    torch.Tensor: The quantile value(s) along the specified dimension.
+    """
+    assert 0 <= q <= 1, "\n\nquantile value should be a float between 0 and 1.\n\n"
+
+    if dim is None:
+        tensor = tensor.flatten()
+        dim = 0
+
+    sorted_tensor, _ = torch.sort(tensor, dim=dim)
+    num_elements = sorted_tensor.size(dim)
+    index = q * (num_elements - 1)
+    lower_index = int(index)
+    upper_index = min(lower_index + 1, num_elements - 1)
+    lower_value = sorted_tensor.select(dim, lower_index)
+    upper_value = sorted_tensor.select(dim, upper_index)
+    # linear interpolation
+    weight = index - lower_index
+    quantile_value = (1 - weight) * lower_value + weight * upper_value
+
+    return quantile_value.unsqueeze(dim) if keepdim else quantile_value
+
+
 
 def cett_from_threshold(activations, down_weight, threshold, norms=None, tot_norm=None):
     if norms is None:
@@ -35,7 +68,7 @@ def calculate_threshold(activations, down_weight, col_norms, cett_target, n_thre
     tot_norm = output.norm(dim=-1)
 
     min_value = norms.min()
-    max_value = norms.quantile(0.99)
+    max_value = quantile(norms, 0.99)
     threshold_grid = torch.linspace(min_value, max_value, n_thresholds)
     max_cett = cett_from_threshold(activations, down_weight, max_value, norms=norms, tot_norm=tot_norm)
     outlier_mask = max_cett > cett_target
@@ -117,7 +150,7 @@ def find_thresholds(
     dataset = dataset.take(max_samples).map(sample_and_tokenize, batched=False)
     dataset = dataset.with_format("torch")
 
-    dataloader = TorchDataLoader(dataset, batch_size=1, num_workers=num_workers, pin_memory=False, prefetch_factor=2)  # type: ignore
+    dataloader = TorchDataLoader(dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=False, prefetch_factor=2)  # type: ignore
 
     # Compute thresholds for each layer across all dataset entries
     logger.info(f"Beginning to compute thresholds using {max_samples} samples")
@@ -125,7 +158,7 @@ def find_thresholds(
     with torch.no_grad():
         all_col_norms = {layer_idx: layer.mlp.down_proj.weight.norm(dim=0) \
                          for layer_idx, layer in enumerate(model.activation_capture.get_layers())}
-        for batch in tqdm(dataloader, total=max_samples):
+        for batch in tqdm(dataloader, total=max_samples//batch_size):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
         
@@ -146,7 +179,7 @@ def find_thresholds(
         thresholds[layer_idx] = sum(layer_thresholds) / len(layer_thresholds)
 
     # Save layerwise thresholds as record in central json file
-    if not os.path.exists(save_path):
+    if os.path.exists(save_path):
         with open("save_path", mode="r", encoding="utf-8") as read_file:
             threshold_dict = json.load(read_file)
     else:
