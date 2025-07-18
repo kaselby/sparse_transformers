@@ -57,7 +57,7 @@ def main():
             layer_path = os.path.join(args.sp_dir, f"final_predictor_layer_{layer_idx}_lora_{args.lora_size}pct.pt")
             if not os.path.exists(layer_path):
                 logger.error(f"Pretrained weights for sparse predictor at layer {layer_idx} do not exist.")
-                return
+                continue
             pretrained_dict = torch.load(layer_path)
             layer.mlp_lora_proj.load_state_dict(pretrained_dict)
         model.tie_weights()
