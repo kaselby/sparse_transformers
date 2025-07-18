@@ -154,16 +154,16 @@ def calculate_threshold(neuron_outputs, cett_target, n_thresholds=10000):
     min_value = norms.min()
     max_value = norms.quantile(0.99)
     threshold_grid = torch.linspace(min_value, max_value, n_thresholds)
-    #initial_cett = cett_from_threshold(neuron_outputs, max_value, norms=norms, tot_norm=tot_norm)
-    #outlier_mask = initial_cett > cett_target
+    max_cett = cett_from_threshold(neuron_outputs, max_value, norms=norms, tot_norm=tot_norm)
+    outlier_mask = max_cett > cett_target
     
     left = 0
     right = n_thresholds
     while left < right:
         print(left,right)
         mid = (left + right) // 2
-        #cett = cett_from_threshold(neuron_outputs, threshold_grid[mid], norms=norms, tot_norm=tot_norm)[outlier_mask].mean()
-        cett = cett_from_threshold(neuron_outputs, threshold_grid[mid], norms=norms, tot_norm=tot_norm).mean()
+        cett = cett_from_threshold(neuron_outputs, threshold_grid[mid], norms=norms, tot_norm=tot_norm) # Compute CETT for each token
+        cett = cett[outlier_mask].mean()    # Remove outliers and take average
         if cett <= cett_target:
             left = mid + 1
         else:
