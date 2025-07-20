@@ -5,6 +5,7 @@ import time
 import statistics
 from typing import List, Dict, Tuple, Union
 import numpy as np
+import os
 
 import torch
 from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
@@ -25,6 +26,12 @@ def parse_args() -> argparse.Namespace:
                       help='Config file')
     parser.add_argument('--max_response_length', type=int, default=-1,
                       help='Maximum response tokens per prompt.')
+    parser.add_argument("--sp_dir", type=str, default="",
+                        help="Path to trained predictor dir for sparse model.")
+    parser.add_argument("--lora_size", type=float, default=4.0,
+                       help="Size of lora predictors to use as percentage of total hidden size")
+    parser.add_argument("--sp_layers", default="all", nargs='+',
+                       help="Which layers to use sparse predictors for")
     return parser.parse_args()
 
 
@@ -395,6 +402,8 @@ def main():
 
     # Load models and tokenizer
     config = AutoConfig.from_pretrained(args.config)
+    config.lora_size = args.lora_size
+    config.sp_layers = args.sp_layers
     checkpoint = config._name_or_path
     tokenizer = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
@@ -411,6 +420,15 @@ def main():
 
     # Always run SkipLLaMA benchmark with HuggingFace
     skip_model = AutoModelForCausalLM.from_pretrained(checkpoint, config=config)
+    if args.sp_dir is not None:
+        for layer_idx in skip_model.get_decoder().sp_layers:
+            layer = skip_model.get_decoder().layers[layer_idx]
+            layer_path = os.path.join(args.sp_dir, f"final_predictor_layer_{layer_idx}_lora_{args.lora_size}pct.pt")
+            if not os.path.exists(layer_path):
+                print(f"Pretrained weights for sparse predictor at layer {layer_idx} do not exist.")
+                return
+            pretrained_dict = torch.load(layer_path)
+            layer.mlp_lora_proj.load_state_dict(pretrained_dict)
     skip_model.tie_weights()
     
     skip_name = "Skip-%s" % model_name

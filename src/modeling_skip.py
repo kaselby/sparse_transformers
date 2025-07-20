@@ -64,7 +64,7 @@ class SkipMLP(nn.Module):
         
         # Initialize mask but defer WeightCache creation until post_init
         self.init_mask = torch.ones(intermediate_size, dtype=torch.bool)
-        self.init_mask[int(intermediate_size * (1-sparsity)):] = 0
+        #self.init_mask[int(intermediate_size * (1-sparsity)):] = 0
         
         self.weight_cache : Optional[WeightCache] = None
 
