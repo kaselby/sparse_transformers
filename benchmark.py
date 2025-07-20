@@ -402,8 +402,10 @@ def main():
 
     # Load models and tokenizer
     config = AutoConfig.from_pretrained(args.config)
-    config.lora_size = args.lora_size
+    if args.sp_layers != "all":
+        args.sp_layers = [int(x) for x in args.sp_layers]
     config.sp_layers = args.sp_layers
+    config.lora_size = args.lora_size
     checkpoint = config._name_or_path
     tokenizer = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token

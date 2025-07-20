@@ -222,7 +222,7 @@ def build_skip_connection_model(pretrained_model_class: type[PreTrainedModel]) -
             self.vocab_size = config.vocab_size
 
             self._init_components(config)
-            self.sp_layers = config.sp_layers if hasattr(config, 'sp_layers') and config.sp_layers != "all" else list(range(self.layers))
+            self.sp_layers = config.sp_layers if hasattr(config, 'sp_layers') and config.sp_layers != "all" else list(range(config.num_hidden_layers))
             
             self.gradient_checkpointing = False
             # Initialize weights and apply final processing
