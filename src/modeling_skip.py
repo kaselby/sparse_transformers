@@ -162,7 +162,7 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
     
     def _compute_binary_mask(self, hidden_states):
         lora_proj_scores = self.mlp_lora_proj(hidden_states.view(-1, hidden_states.shape[-1]))
-        binary_mask = (lora_proj_scores >= lora_proj_scores.mean() + 2 * lora_proj_scores.std()).bool()
+        binary_mask = (lora_proj_scores >= 0).bool()
         self.weight_cache.update_active_weights(binary_mask.any(dim=0))  # type: ignore
     
     def forward(

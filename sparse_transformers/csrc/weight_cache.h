@@ -156,8 +156,8 @@ public:
         // Store dimensions
         hidden_dim = hidden_size;
         sparse_dim = gate_weight.size(0);
-        max_active_indices = init_mask.sum().item<int64_t>();
-        min_active_indices = max_active_indices / 2;
+        max_active_indices = sparse_dim;
+        min_active_indices = 0;
         gate_row_size = gate_weight.size(1);
         up_row_size = up_weight.size(1);
         down_row_size = hidden_dim; // After transpose: [intermediate_size, hidden_size]

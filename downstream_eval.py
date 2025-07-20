@@ -30,6 +30,8 @@ def parse_args():
                        help="Device to use (auto, cpu, cuda)")
     parser.add_argument("--lora_size", type=float, default=4.0,
                        help="Size of lora predictors to use as percentage of total hidden size")
+    parser.add_argument("--sp_layers", default="all", nargs='+',
+                       help="Which layers to use sparse predictors for")
     return parser.parse_args()
 
 
@@ -52,6 +54,7 @@ def main():
     if args.model_type == "sparse":
         config = AutoConfig.from_pretrained(args.model_name_or_config)
         config.lora_size = args.lora_size / 100.0
+        config.sp_layers = args.sp_layers
         model = AutoModelForCausalLM.from_pretrained(config._name_or_path, config=config)
         for layer_idx in model.get_decoder().sp_layers:
             layer = model.get_decoder().layers[layer_idx]
@@ -66,6 +69,7 @@ def main():
 
     wrapped_model = HFLM(
         pretrained=model,
+        backend="causal",
         batch_size=args.batch_size,
         device=device
     )
