@@ -352,9 +352,8 @@ def build_skip_connection_model(pretrained_model_class: type[PreTrainedModel]) -
 
 
 def build_skip_connection_model_for_causal_lm(pretrained_model_class: type[PreTrainedModel], base_model_class: type[PreTrainedModel]):
-    ACTIVATION_CAPTURE = ActivationCapture
-
     class SkipConnectionModelForCausalLM(pretrained_model_class, GenerationMixin):
+        ACTIVATION_CAPTURE = ActivationCapture
         _tied_weights_keys = ["lm_head.weight"]
         _tp_plan = {"lm_head": "colwise_rep"}
         _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
