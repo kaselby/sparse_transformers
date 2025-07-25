@@ -539,8 +539,8 @@ class LayerwisePredictorTrainer:
                         f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_precision": eval_metrics[
                             "precision"
                         ],
-                        f"layer_{self.layer_idx}/eval_recall": eval_metrics["recall"],
-                        f"layer_{self.layer_idx}/eval_f1": eval_metrics["f1"],
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_recall": eval_metrics["recall"],
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_f1": eval_metrics["f1"],
                         "epoch": epoch + 1,
                     }
                 )
@@ -559,7 +559,7 @@ class LayerwisePredictorTrainer:
                     if use_wandb:
                         wandb.log(
                             {
-                                f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}pct/best_f1": best_f1,
+                                f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/best_f1": best_f1,
                                 "epoch": epoch + 1,
                             }
                         )
