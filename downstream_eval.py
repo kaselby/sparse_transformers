@@ -30,6 +30,8 @@ def parse_args():
                        help="Device to use (auto, cpu, cuda)")
     parser.add_argument("--lora_size", type=float, default=4.0,
                        help="Size of lora predictors to use as percentage of total hidden size")
+    parser.add_argument("--sp_layers", default="all", nargs='+',
+                       help="Which layers to use sparse predictors for")
     return parser.parse_args()
 
 
@@ -51,9 +53,13 @@ def main():
         model = AutoModelForCausalLM.from_pretrained(args.model_name_or_config)
     if args.model_type == "sparse":
         config = AutoConfig.from_pretrained(args.model_name_or_config)
+        if args.sp_layers != "all":
+            args.sp_layers = [int(x) for x in args.sp_layers]
         config.lora_size = args.lora_size / 100.0
+        config.sp_layers = args.sp_layers
         model = AutoModelForCausalLM.from_pretrained(config._name_or_path, config=config)
-        for layer_idx, layer in enumerate(model.get_decoder().layers):
+        for layer_idx in model.get_decoder().sp_layers:
+            layer = model.get_decoder().layers[layer_idx]
             layer_path = os.path.join(args.sp_dir, f"final_predictor_layer_{layer_idx}_lora_{args.lora_size}pct.pt")
             if not os.path.exists(layer_path):
                 logger.error(f"Pretrained weights for sparse predictor at layer {layer_idx} do not exist.")
@@ -65,6 +71,7 @@ def main():
 
     wrapped_model = HFLM(
         pretrained=model,
+        backend="causal",
         batch_size=args.batch_size,
         device=device
     )
