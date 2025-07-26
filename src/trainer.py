@@ -415,6 +415,7 @@ class LayerwisePredictorTrainer:
 
         global_step = 0
         start_epoch = 0
+        best_f1 = 0.0
 
         # Handle checkpoint resuming
         if resume_from_checkpoint:
@@ -429,7 +430,7 @@ class LayerwisePredictorTrainer:
                     )
                     global_step = checkpoint_data["global_step"]
                     start_epoch = checkpoint_data["epoch"]
-                    #best_f1 = checkpoint_data["best_f1"]
+                    best_f1 = checkpoint_data["best_f1"]
                     logger.info(
                         f"Resumed training from step {global_step}, epoch {start_epoch}"
                     )
@@ -439,7 +440,7 @@ class LayerwisePredictorTrainer:
                     )
                     global_step = 0
                     start_epoch = 0
-                    #best_f1 = 0.0
+                    best_f1 = 0.0
                 except AssertionError as e:
                     logger.warning(
                         f"Failed to load checkpoint: {e}. Skipping training."
@@ -516,6 +517,7 @@ class LayerwisePredictorTrainer:
                         epoch,
                         optimizer,
                         scheduler,
+                        best_f1,
                         loss.item(),
                     )
 
@@ -537,26 +539,19 @@ class LayerwisePredictorTrainer:
                         f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_precision": eval_metrics[
                             "precision"
                         ],
-                        f"layer_{self.layer_idx}/eval_recall": eval_metrics["recall"],
-                        f"layer_{self.layer_idx}/eval_f1": eval_metrics["f1"],
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_recall": eval_metrics["recall"],
+                        f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/eval_f1": eval_metrics["f1"],
                         "epoch": epoch + 1,
                     }
                 )
 
             # Save best model among all lora models for the given layer
-            if save_dir:
-                f1_path = os.path.join(save_dir, f"f1_store.pt")   
-                f1_store = torch.load(f1_path)
-                
-                best_f1 = f1_store[self.layer_idx] if self.layer_idx in f1_store else 0.0
-
-                if eval_metrics["f1"] > best_f1:
-                    best_f1 = eval_metrics["f1"]
-                    f1_store[self.layer_idx] = best_f1
-                    torch.save(f1_store, f1_path)
-                    
-                    # Save best model
-                    best_model_name = f"best_predictor_layer_{self.layer_idx}"
+            # Save best model
+            if eval_metrics["f1"] > best_f1:
+                best_f1 = eval_metrics["f1"]
+                # Save the best model immediately
+                if save_dir:
+                    best_model_name = f"best_predictor_layer_{self.layer_idx}_lora_{self.lora_pct:.1f}pct"
                     self.save_predictor(save_dir, name=best_model_name)
                     logger.info(f"Saved new best model: {best_model_name}")
 
@@ -564,7 +559,7 @@ class LayerwisePredictorTrainer:
                     if use_wandb:
                         wandb.log(
                             {
-                                f"layer_{self.layer_idx}/best_f1": best_f1,
+                                f"layer_{self.layer_idx}_lora_{self.lora_pct:.1f}%/best_f1": best_f1,
                                 "epoch": epoch + 1,
                             }
                         )
@@ -598,6 +593,7 @@ class LayerwisePredictorTrainer:
         epoch: int,
         optimizer: torch.optim.Optimizer,
         scheduler,
+        best_f1: float,
         loss: float,
     ):
         """Save training checkpoint with full state."""
@@ -609,6 +605,7 @@ class LayerwisePredictorTrainer:
             "predictor_state_dict": self.predictor.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
+            "best_f1": best_f1,
             "loss": loss,
             "layer_idx": self.layer_idx,
             "lora_pct": self.lora_pct,
@@ -653,6 +650,7 @@ class LayerwisePredictorTrainer:
         return {
             "global_step": checkpoint["global_step"],
             "epoch": checkpoint["epoch"],
+            "best_f1": checkpoint["best_f1"],
             "loss": checkpoint["loss"],
         }
 
@@ -829,12 +827,6 @@ class MultiLayerPredictorTrainer:
             [train_size, val_size],
             generator=torch.Generator().manual_seed(seed),
         )
-
-        f1_path = os.path.join(save_dir, "f1_store.pt") # This should be replaced by something more sophisticated like an LMDB
-        if not os.path.exists(f1_path):
-            torch.save({
-                layer_idx: 0.0 for layer_idx in self.layer_indices
-            }, f1_path)
 
         for layer_idx in self.layer_indices:
             logger.info(f"Training layer {layer_idx}...")
