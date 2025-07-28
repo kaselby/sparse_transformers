@@ -127,7 +127,7 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         self.hidden_size = config.hidden_size
         self.layer_idx = layer_idx
         self.sparsity = config.sparsity
-        self.use_weight_cache = config.use_weight_cache
+        self.use_weight_cache = getattr(config, 'use_weight_cache', True)
 
         self._init_components(config, layer_idx)
 
