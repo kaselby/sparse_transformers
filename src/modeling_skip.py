@@ -53,8 +53,7 @@ class FastLoRAProjection(nn.Module):
         return self.up(self.down(x))
                      
 class SkipMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float, bias: bool = False, act_fn="silu",
-                 min_sparsity=0.5):
+    def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float, bias: bool = False, act_fn="silu", use_weight_cache=True):
         super().__init__()
         self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
         self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
@@ -64,7 +63,7 @@ class SkipMLP(nn.Module):
         self.intermediate_size = intermediate_size
         self.act_fn_name = act_fn
         self.act_fn = ACT2FN[act_fn]
-        #self.min_sparsity = min_sparsity
+        self.use_weight_cache = use_weight_cache
         
         # Initialize mask but defer WeightCache creation until post_init
         self.init_mask = torch.ones(intermediate_size, dtype=torch.bool)
@@ -72,13 +71,16 @@ class SkipMLP(nn.Module):
         
         self.weight_cache : Optional[WeightCache] = None
 
+        if not self.use_weight_cache:
+            self.weight_mask = None
+
         # Register buffers - start with reasonable size and ensure they can be resized
         self.register_buffer('down_proj_buffer', torch.zeros(1, hidden_size, requires_grad=False))
         self.register_buffer('combined_proj_buffer', torch.zeros(1, 2 * int(intermediate_size * sparsity), requires_grad=False))
 
     def initialize_weight_cache(self):
         """Tie weights after weights are loaded (called from post_init)."""
-        if self.weight_cache is None:
+        if self.weight_cache is None and self.use_weight_cache:
             # Create and initialize weight cache
             self.weight_cache = WeightCache(   
                 self.init_mask,
