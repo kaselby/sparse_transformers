@@ -457,7 +457,7 @@ def build_skip_connection_model_for_causal_lm(pretrained_model_class: type[PreTr
 
         def reset_cache(self):
             """Reset cache of all layers."""
-            for layer_idx in self.model.sp_layers:  # type: ignore
+            for layer_idx in self.get_decoder().sp_layers:  # type: ignore
                 layer = self.model.layers[layer_idx]
                 layer.mlp.weight_cache = None  # type: ignore
                 layer.mlp.initialize_weight_cache()  # type: ignore

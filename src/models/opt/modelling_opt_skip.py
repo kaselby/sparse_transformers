@@ -41,18 +41,20 @@ from src.modeling_skip import (
     SkipMLP, SkipDecoderLayer, 
     build_skip_connection_model, build_skip_connection_model_for_causal_lm
 )
+from src.activation_capture import ActivationCapture
 
 logger = logging.get_logger(__name__)
 
 
 class OPTMLP(nn.Module):    # double check config stuff later
     def __init__(self, config):
-        self.up_proj = nn.Linear(config.embed_dim, config.ffn_dim, bias=config.enable_bias)
-        self.down_proj = nn.Linear(config.ffn_dim, config.embed_dim, bias=config.enable_bias)
-        self.activation_fn = ACT2FN[config.activation_function]
+        super().__init__()
+        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=config.enable_bias)
+        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=config.enable_bias)
+        self.act_fn = ACT2FN[config.activation_function]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.activation_fn(self.up_proj(x))
+        x = self.act_fn(self.up_proj(x))
         return self.down_proj(x)
 
 
@@ -134,16 +136,22 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
         del self.fc1
         del self.fc2
 
-    def _set_mlp_train(self, config):
+    def _set_mlp_train(self, config, layer_idx):
         self.mlp = OPTMLP(config)
 
-    def _set_mlp_inference(self, config):
+    def _set_mlp_inference(self, config, layer_idx):
         self.mlp = OPTSkipMLP(
             config.hidden_size,
             config.intermediate_size,
             config.sparsity,
             config.enable_bias,
         )
+
+    @property
+    def weight_cache(self):
+        """Dynamically access the weight cache from the MLP."""
+        if hasattr(self.mlp, 'weight_cache') and isinstance(self.mlp, OPTSkipMLP):
+            return self.mlp.weight_cache
 
     def forward(
         self,
@@ -182,7 +190,7 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
         if self.do_layer_norm_before:
             hidden_states = self.self_attn_layer_norm(hidden_states)
 
-        if not self.training:  # Use PyTorch's built-in training flag
+        if self.is_sparse:  # Use PyTorch's built-in training flag
             self._compute_binary_mask(hidden_states)
 
         # Self Attention
@@ -669,6 +677,7 @@ class OPTSkipDecoderWrapper(OPTSkipPreTrainedModel):
 
 
 class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
+    ACTIVATION_CAPTURE = ActivationCapture
     _tied_weights_keys = ["lm_head.weight"]
     _keys_to_ignore_on_load_missing = [
         "model.decoder.layers.*.mlp.up_proj",
@@ -739,9 +748,10 @@ class OPTSkipConnectionForCausalLM(OPTSkipPreTrainedModel, GenerationMixin):
 
     def reset_cache(self):
         """Reset cache of all layers."""
-        for layer in self.model.decoder.layers:
-            layer.mlp.weight_cache = None
-            layer.mlp.initialize_weight_cache()
+        for layer_idx in self.get_decoder().sp_layers:  # type: ignore
+            layer = self.get_decoder().layers[layer_idx]
+            layer.mlp.weight_cache = None  # type: ignore
+            layer.mlp.initialize_weight_cache()  # type: ignore
 
     def forward(
         self,
