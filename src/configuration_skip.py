@@ -10,7 +10,8 @@ def build_skip_config(base_config_class: type[PretrainedConfig], model_type_name
         has_no_defaults_at_init: bool = True
 
         def __init__(self, 
-                    sparsity: float,
+                    sparsities: float,
+                    sparsity_method: str = "naive",
                     predictor_loss_type: str = "bce",
                     predictor_temperature: float = 1.0,
                     predictor_loss_alpha: float = 1.0,
@@ -18,7 +19,8 @@ def build_skip_config(base_config_class: type[PretrainedConfig], model_type_name
                     use_optimized_weight_cache: bool = True,
                     capture_activations: str = None,
                     **kwargs):
-            self._sparsity = sparsity
+            self.sparsities = sparsities
+            self.sparsity_method = sparsity_method
             self.predictor_loss_type = predictor_loss_type
             self.predictor_temperature = predictor_temperature
             self.predictor_loss_alpha = predictor_loss_alpha
@@ -27,13 +29,6 @@ def build_skip_config(base_config_class: type[PretrainedConfig], model_type_name
             self.capture_activations = capture_activations
             super().__init__(**kwargs)
         
-        @property
-        def sparsity(self):
-            return self._sparsity
-        
-        @sparsity.setter
-        def sparsity(self, value):
-            self._sparsity = value
 
         @classmethod
         def from_json_file(cls, json_file: Union[str, os.PathLike]):

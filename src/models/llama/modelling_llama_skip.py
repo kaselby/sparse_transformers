@@ -59,7 +59,7 @@ class LlamaSkipDecoderLayer(SkipDecoderLayer):
         self.mlp = SkipMLP(
             config.hidden_size,
             config.intermediate_size,
-            config.sparsity,
+            config.sparsities[layer_idx],
             config.mlp_bias,
             config.hidden_act
         )
