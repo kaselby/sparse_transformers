@@ -473,7 +473,8 @@ def main():
         test_prompts=test_prompts,
         model_device=skip_device,
         model_name=skip_name,
-        verbose=args.verbose
+        verbose=args.verbose,
+        use_cache=args.use_cache
     )
 
     # Run standard model benchmark using HuggingFace implementation
@@ -485,7 +486,8 @@ def main():
         test_prompts=test_prompts,
         model_device=standard_device,
         model_name=standard_name,
-        verbose=args.verbose
+        verbose=args.verbose,
+        use_cache=args.use_cache
     )
     
 
