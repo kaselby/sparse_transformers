@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
                       help='Config file')
     parser.add_argument('--max_response_length', type=int, default=-1,
                       help='Maximum response tokens per prompt.')
-    parser.add_argument("--sp_dir", type=str, default="",
+    parser.add_argument("--sp_dir", type=str, default=None,
                         help="Path to trained predictor dir for sparse model.")
     parser.add_argument("--lora_size", type=float, default=4.0,
                        help="Size of lora predictors to use as percentage of total hidden size")
@@ -159,7 +159,7 @@ def benchmark_single_prompt(
 
     if use_cache:
         past_key_values = DynamicCache()
-        cache_position = torch.arange(input_tokens, dtype=torch.int64, device="cuda:0")
+        cache_position = torch.arange(input_tokens, dtype=torch.int64, device=device)
     else:
         past_key_values = None
         cache_position = None
@@ -213,6 +213,7 @@ def benchmark_single_prompt(
             # Update input for next iteration
             if use_cache:
                 current_input_ids = next_token
+                cache_position = cache_position[-1:] + 1
             else:
                 current_input_ids = torch.cat([current_input_ids, next_token], dim=-1)
             attention_mask = torch.cat([attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1)
