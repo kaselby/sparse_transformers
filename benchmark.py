@@ -32,6 +32,8 @@ def parse_args() -> argparse.Namespace:
                        help="Size of lora predictors to use as percentage of total hidden size")
     parser.add_argument("--sp_layers", default="all", nargs='+',
                        help="Which layers to use sparse predictors for")
+    parser.add_argument("--sparsity_method", default="naive", choices=["naive", "topk", "statistical_topk"],
+                       help="Which method to use to determine active indices")
     parser.add_argument('--use_cache', action='store_true', default=False,
                       help='Whether to use KV cache')
     return parser.parse_args()
@@ -440,6 +442,7 @@ def main():
         args.sp_layers = [int(x) for x in args.sp_layers]
     config.sp_layers = args.sp_layers
     config.lora_size = args.lora_size / 100.0
+    config.sparsity_method = args.sparsity_method
     checkpoint = config._name_or_path
     tokenizer = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
