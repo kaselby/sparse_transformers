@@ -1,3 +1,37 @@
+#!/usr/bin/env python3
+"""
+Calculate ground-truth sparsities for various base models on a given dataset.
+
+This script takes a list of HuggingFace-compatible models and runs each model 
+on a number of samples from a given dataset. Activation statistics are captured
+from the models' forward passes, and used to determine the average ground-truth
+sparsity of each layer for each model.
+
+This data can then be plotted or saved in a json file to be used as thresholds
+for the topk or statistical-topk sparsity methods using trained predictors. 
+
+
+Usage examples:
+  # Capture ground truth sparsity values for a particular model or models
+  python measure_gt_sparsity.py \
+    --models meta-llama/Llama-3.2-3B-Instruct \
+    --num_samples 2048 \
+    --max_length 512 \
+    --output_dir sparsities \
+    --device cuda
+
+  # Generate a plot of ground truth sparsity values by layer and model
+  python measure_gt_sparsity.py \
+    --models meta-llama/Llama-3.2-3B-Instruct Qwen/Qwen2-1.5B google/gemma-3n-E2B \
+    --num_samples 2048 \
+    --max_length 512 \
+    --output_dir sparsities \
+    --device cuda \
+    --make_plots
+"""
+
+
+
 import argparse
 from collections import defaultdict
 import json
@@ -113,7 +147,7 @@ def analyze_sparsity(args, model_name, device):
 
         for key, layer_sparsities in analyzer.mlp_sparsity.items():
             analyzer.mlp_sparsity[key] = [
-                sum(layer_sparsities[layer_idx]) * 100/ len(layer_sparsities[layer_idx])
+                sum(layer_sparsities[layer_idx]) / len(layer_sparsities[layer_idx])
                 for layer_idx in range(len(layer_sparsities))
             ]
     finally:
@@ -121,25 +155,19 @@ def analyze_sparsity(args, model_name, device):
     return analyzer.mlp_sparsity
 
 
-def plot_sparsities(args, device):
-    outs = defaultdict(dict)
-    for model in args.models:
+def plot_sparsities(sparsities, output_dir=None):
+    plt.figure(figsize=(10, 6))
+    for model, model_sparsities in sparsities.items():
         model_name = model.split("/")[1].capitalize()
-        model_sparsities = analyze_sparsity(args, model, device)
-        for k, v in model_sparsities.items():
-            outs[k][model_name] = v
-    json.dump(outs, open(os.path.join(args.output_dir, "sparsity.json"), "w"))
-    for k, outs_k in outs.items():
-        plt.figure(figsize=(10, 6))
-        for model_name, model_sparsities in outs_k.items():
-            plt.plot([i*100/len(model_sparsities) for i in range(len(model_sparsities))], model_sparsities, label=model_name)
-        plt.xlabel("Layer Index Percentage (layer_idx/num_layers)")
-        plt.ylabel(f"% of Neurons Inactive")
-        plt.title(f"{k.capitalize()} Sparsity By Layer")
-        plt.legend()
-        plt.minorticks_on()
+        plt.plot([i*100/len(model_sparsities) for i in range(len(model_sparsities))], [x*100 for x in model_sparsities], label=model_name)
+    plt.xlabel("Layer Index Percentage (layer_idx/num_layers)")
+    plt.ylabel(f"% of Neurons Inactive")
+    plt.title(f"ACtivation Sparsity By Layer")
+    plt.legend()
+    plt.minorticks_on()
+    if output_dir:
         plt.savefig(
-            os.path.join(args.output_dir, f"{k.capitalize()}_sparsity_analysis.png"),
+            os.path.join(output_dir, f"sparsity_analysis.png"),
             dpi=300,
             bbox_inches="tight",
         )
@@ -228,7 +256,7 @@ def main():
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
-        "--save_plots", action="store_true", help="Generate and save analysis plots"
+        "--make_plots", action="store_true", help="Generate and save analysis plots"
     )
 
     args = parser.parse_args()
@@ -247,7 +275,15 @@ def main():
     # Setup output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
-    plot_sparsities(args, device)
+    outs = defaultdict(dict)
+    for model in args.models:
+        model_sparsities = analyze_sparsity(args, model, device)
+        for k, v in model_sparsities.items():
+            outs[k][model] = v
+    json.dump(outs, open(os.path.join(args.output_dir, "sparsity.json"), "w"))
+
+    if args.make_plots:
+        plot_sparsities(outs)
 
 
 if __name__ == "__main__":
