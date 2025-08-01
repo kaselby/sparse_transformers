@@ -101,7 +101,7 @@ class SkipMLP(nn.Module):
             if hasattr(self, 'init_mask'):
                 self.init_mask = self.init_mask.to(device)
         return result
-    
+
     def forward(self, x: torch.Tensor, use_sparse: bool = True) -> torch.Tensor:
         if use_sparse:
             if self.use_weight_cache:
@@ -217,7 +217,8 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
             self.weight_cache.update_active_weights(binary_mask)  # type: ignore
         else:
             self.mlp.weight_mask = binary_mask
-    
+            
+            
     def forward(
         self,
         hidden_states: torch.Tensor,
