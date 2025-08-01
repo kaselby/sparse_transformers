@@ -25,7 +25,7 @@ class ActivationCapture():
             # Just detach, don't clone or move to CPU yet
             self.mlp_activations[Hook.IN][layer_idx] = input[0].clone().detach()
             return output
-        handle = layer.self_attn.register_forward_hook(hook)
+        handle = layer.register_forward_hook(hook)
         return handle
 
     def _register_act_hook(self, layer_idx, layer):
