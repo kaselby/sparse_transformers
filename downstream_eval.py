@@ -20,18 +20,20 @@ def parse_args():
     parser.add_argument("--model_type", type=str, choices=["hf", "sparse"], default="hf")
     parser.add_argument("--model_name_or_config", type=str, required=True,
                        help="Name or path of the base model (e.g., meta-llama/Llama-2-7b-hf)")
-    parser.add_argument("--sp_dir", type=str, default="",
-                        help="Path to trained predictor dir for sparse model.")
     parser.add_argument("--tasks", nargs='+', default=["hellaswag"], 
                         help="Tasks on which to evaluate")
     parser.add_argument("--batch_size", type=int, default=4,
                        help="Batch size for processing")
     parser.add_argument("--device", type=str, default="auto",
                        help="Device to use (auto, cpu, cuda)")
+    parser.add_argument("--sp_dir", type=str, default="",
+                        help="Path to trained predictor dir for sparse model.")
     parser.add_argument("--lora_size", type=float, default=4.0,
                        help="Size of lora predictors to use as percentage of total hidden size")
     parser.add_argument("--sp_layers", default="all", nargs='+',
                        help="Which layers to use sparse predictors for")
+    parser.add_argument("--sparsity_method", default="naive", choices=["naive", "topk", "statistical_topk"],
+                       help="Which method to use to determine active indices")
     return parser.parse_args()
 
 
@@ -57,6 +59,7 @@ def main():
             args.sp_layers = [int(x) for x in args.sp_layers]
         config.lora_size = args.lora_size / 100.0
         config.sp_layers = args.sp_layers
+        config.sparsity_method = args.sparsity_method
         model = AutoModelForCausalLM.from_pretrained(config._name_or_path, config=config)
         for layer_idx in model.get_decoder().sp_layers:
             layer = model.get_decoder().layers[layer_idx]
