@@ -59,6 +59,7 @@ class OPTMLP(nn.Module):    # double check config stuff later
 
 class OPTSkipMLP(nn.Module):
     def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float, bias: bool = False, act_fn="relu", use_weight_cache=True):
+
         super().__init__()
         self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
         self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=bias)
@@ -127,7 +128,7 @@ class OPTSkipMLP(nn.Module):
     
     def _forward_dense(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(self.act_fn(self.up_proj(x)))
-    
+
 
 class OPTSkipDecoderLayer(SkipDecoderLayer):
     def _init_components(self, config, layer_idx):
@@ -162,6 +163,7 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
             config.enable_bias,
             "relu",
             getattr(config, 'use_weight_cache', True)
+
         )
 
     @property
