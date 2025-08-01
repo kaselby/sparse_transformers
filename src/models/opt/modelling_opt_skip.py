@@ -126,7 +126,7 @@ class OPTSkipMLP(nn.Module):
         return out
     
     def _forward_dense(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(self.act_fn(self.gate_proj(x)))
+        return self.down_proj(self.act_fn(self.up_proj(x)))
     
 
 class OPTSkipDecoderLayer(SkipDecoderLayer):
