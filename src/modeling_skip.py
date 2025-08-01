@@ -81,7 +81,8 @@ class SkipMLP(nn.Module):
                 self.hidden_size,
                 self.gate_proj.weight,
                 self.up_proj.weight, 
-                self.down_proj.weight
+                self.down_proj.weight,
+                True
             )
 
     def to(self, *args, **kwargs):
@@ -102,7 +103,8 @@ class SkipMLP(nn.Module):
             self.weight_cache.get_active_down_weight(),  # type: ignore
             self.down_proj_buffer,
             self.combined_proj_buffer,
-            self.act_fn
+            self.act_fn,
+            True
         )
         return out
 
@@ -455,7 +457,7 @@ def build_skip_connection_model_for_causal_lm(pretrained_model_class: type[PreTr
 
         def reset_cache(self):
             """Reset cache of all layers."""
-            for layer_idx in self.model.sp_layers:  # type: ignore
+            for layer_idx in self.get_decoder().sp_layers:  # type: ignore
                 layer = self.model.layers[layer_idx]
                 layer.mlp.weight_cache = None  # type: ignore
                 layer.mlp.initialize_weight_cache()  # type: ignore
