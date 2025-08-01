@@ -199,9 +199,7 @@ TORCH_LIBRARY(sparse_mlp, m)
         .def(torch::init<const torch::Tensor &, int64_t, const torch::Tensor &, const torch::Tensor &, const torch::Tensor &, bool>())
         .def("update_active_weights", &WeightCache::update_active_weights)
         .def("get_concat_weight", &WeightCache::get_concat_weight)
-        .def("get_active_down_weight", &WeightCache::get_active_down_weight)
-        .def("get_num_active", &WeightCache::get_num_active)
-        .def("get_sparsity", &WeightCache::get_sparsity);
+        .def("get_active_down_weight", &WeightCache::get_active_down_weight);
 
     // Register sparse MLP operator
     m.def("forward", sparse_mlp_forward);
