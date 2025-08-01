@@ -81,7 +81,8 @@ class SkipMLP(nn.Module):
                 self.hidden_size,
                 self.gate_proj.weight,
                 self.up_proj.weight, 
-                self.down_proj.weight
+                self.down_proj.weight,
+                True
             )
 
     def to(self, *args, **kwargs):
@@ -102,7 +103,8 @@ class SkipMLP(nn.Module):
             self.weight_cache.get_active_down_weight(),  # type: ignore
             self.down_proj_buffer,
             self.combined_proj_buffer,
-            self.act_fn
+            self.act_fn,
+            True
         )
         return out
 
@@ -112,9 +114,16 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
     def __init__(self, config: PretrainedConfig, layer_idx: int):
         super().__init__()
         self.config = config
+        self.intermediate_size = config.hidden_size
         self.hidden_size = config.hidden_size
         self.layer_idx = layer_idx
-        self.sparsity = config.sparsity
+
+        self.sparsity_method = config.sparsity_method
+        self.sparsity = config.sparsities[layer_idx]
+        if self.sparsity_method == "statistical_topk":
+            self.std_multiplier = torch.distributions.normal.Normal(0, 1).icdf(torch.tensor(self.sparsity))
+        elif self.sparsity_method == "topk":
+            self.k = int(self.intermediate_size * (1-self.sparsity))
 
         self._init_components(config, layer_idx)
 
@@ -158,11 +167,26 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         """Dynamically access the weight cache from the MLP."""
         if hasattr(self.mlp, 'weight_cache') and isinstance(self.mlp, SkipMLP):
             return self.mlp.weight_cache
+        
+    # from Gemma 3-n
+    def _gaussian_topk(self, inputs: torch.Tensor) -> torch.Tensor:
+        std_multiplier = self.std_multiplier.type(inputs.dtype)
+        inputs_mean = torch.mean(inputs, dim=-1, keepdim=True)
+        inputs_std = torch.std(inputs, dim=-1, keepdim=True, unbiased=False)
+        cutoff = inputs_mean + inputs_std * std_multiplier
+        return (inputs > cutoff).bool()
 
-    
     def _compute_binary_mask(self, hidden_states):
         lora_proj_scores = self.mlp_lora_proj(hidden_states.view(-1, hidden_states.shape[-1]))
-        binary_mask = (lora_proj_scores >= 0).bool()
+        if self.sparsity_method == "naive":
+            binary_mask = (lora_proj_scores >= 0).bool()
+        elif self.sparsity_method == "topk":
+            active_inds = lora_proj_scores.topk(self.k, sorted=False)[1]
+            binary_mask = torch.zeros_like(lora_proj_scores, dtype=torch.bool)
+            binary_mask.scatter_(-1,active_inds,True)
+        elif self.sparsity_method == "statistical_topk":
+            binary_mask = self._gaussian_topk(lora_proj_scores)
+
         self.weight_cache.update_active_weights(binary_mask.any(dim=0))  # type: ignore
     
     def forward(
@@ -433,7 +457,7 @@ def build_skip_connection_model_for_causal_lm(pretrained_model_class: type[PreTr
 
         def reset_cache(self):
             """Reset cache of all layers."""
-            for layer_idx in self.model.sp_layers:  # type: ignore
+            for layer_idx in self.get_decoder().sp_layers:  # type: ignore
                 layer = self.model.layers[layer_idx]
                 layer.mlp.weight_cache = None  # type: ignore
                 layer.mlp.initialize_weight_cache()  # type: ignore

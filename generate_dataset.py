@@ -40,7 +40,7 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader as TorchDataLoader
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers.trainer_utils import set_seed
 
 from src.activation_capture import Hook
@@ -120,7 +120,7 @@ def process_batch(
     hidden_states_dict = {}
     mlp_activations_dict = {}
     for layer_idx in range(num_layers):
-        hidden_state = model.activation_capture.mlp_activations[Hook.IN][layer_idx][0]
+        hidden_state = model.activation_capture.mlp_activations[Hook.IN][layer_idx]
         hidden_states_dict[layer_idx] = (
             hidden_state.view(-1, hidden_state.shape[-1])
             .cpu()
@@ -129,7 +129,7 @@ def process_batch(
         )
         mlp_activation = model.activation_capture.mlp_activations[Hook.ACT][layer_idx]
         mlp_activations_dict[layer_idx] = (
-            mlp_activation[0]
+            mlp_activation
             .view(-1, mlp_activation.shape[-1])
             .cpu()
             .numpy()
@@ -145,7 +145,7 @@ def process_batch(
 
 
 def generate_dataset(
-    model_name: str,
+    config_path: str,
     dataset_name: str,
     dataset_config: Optional[str],
     output_dir: str,
@@ -157,6 +157,10 @@ def generate_dataset(
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
+    config = AutoConfig.from_pretrained(config_path)
+    model_name = config._name_or_path
+    config.sp_layers = []
+
     # Load tokenizer and model
     logger.info(f"Loading model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -164,6 +168,7 @@ def generate_dataset(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
+        config=config,
         torch_dtype=torch.float32,
         device_map="auto" if device.type == "cuda" else None,
     )
@@ -194,7 +199,7 @@ def generate_dataset(
     def sample_and_tokenize(examples):
         """Sample text chunks before tokenization for efficiency using vectorized operations."""
         texts = examples["text"]
-        tokenized = tokenizer(texts, return_tensors="pt")
+        tokenized = tokenizer(texts, return_tensors="pt", truncation=True, max_length=config.max_position_embeddings)
 
         # Convert to lists
         return {
@@ -363,6 +368,12 @@ def main():
         default=100000,
         help="Maximum number of samples to process",
     )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=8,
+        help="Number of CPU workers",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
         "--device", type=str, default="auto", help="Device to use (auto, cpu, cuda)"
@@ -409,7 +420,7 @@ def main():
 
     # Generate dataset
     generate_dataset(
-        model_name=args.model_name,
+        config_path=args.model_name,
         dataset_name=args.dataset,
         dataset_config=args.dataset_config,
         output_dir=args.output_dir,
