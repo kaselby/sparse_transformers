@@ -18,6 +18,7 @@ from transformers.models.llama.modeling_llama import KwargsForCausalLM
 from transformers.processing_utils import Unpack
 from transformers.utils import logging
 from transformers.utils.import_utils import is_torch_flex_attn_available
+from transformers.activations import ACT2FN
 
 from sparse_transformers import WeightCache, sparse_mlp_forward
 from src.activation_capture import ActivationCapture
@@ -52,7 +53,8 @@ class FastLoRAProjection(nn.Module):
         return self.up(self.down(x))
                      
 class SkipMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float, bias: bool = False, act_fn="silu"):
+    def __init__(self, hidden_size: int, intermediate_size: int, sparsity: float, bias: bool = False, act_fn="silu",
+                 min_sparsity=0.5):
         super().__init__()
         self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
         self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=bias)
@@ -60,7 +62,9 @@ class SkipMLP(nn.Module):
         self.sparsity = sparsity
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
-        self.act_fn = act_fn
+        self.act_fn_name = act_fn
+        self.act_fn = ACT2FN[act_fn]
+        #self.min_sparsity = min_sparsity
         
         # Initialize mask but defer WeightCache creation until post_init
         self.init_mask = torch.ones(intermediate_size, dtype=torch.bool)
@@ -95,19 +99,20 @@ class SkipMLP(nn.Module):
             if hasattr(self, 'init_mask'):
                 self.init_mask = self.init_mask.to(device)
         return result
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = sparse_mlp_forward(
-            x.detach(), 
-            self.weight_cache.get_concat_weight(),  # type: ignore
-            self.weight_cache.get_active_down_weight(),  # type: ignore
-            self.down_proj_buffer,
-            self.combined_proj_buffer,
-            self.act_fn,
-            True
-        )
+    
+    def forward(self, x: torch.Tensor, use_sparse: bool = True) -> torch.Tensor:
+        if use_sparse:
+            return self._forward_sparse(x)
+        else:
+            return self._forward(x)
+    
+    def _forward_sparse(self, x: torch.Tensor) -> torch.Tensor:
+        gate, up = x.matmul(self.weight_cache.get_concat_weight().t()).chunk(2, dim=-1)
+        out = (self.act_fn(gate) * up).matmul(self.weight_cache.get_active_down_weight().t())
         return out
-
+    
+    def _forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
 class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
@@ -203,7 +208,8 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)  # type: ignore
-        if self.is_sparse:  # Use PyTorch's built-in training flag
+        use_sparse = self.is_sparse and hidden_states.size(1) == 1  # use dense computation for prefill stage and sparse for cached inference
+        if use_sparse:  # Use PyTorch's built-in training flag
             self._compute_binary_mask(hidden_states)
           
         # Self Attention
@@ -223,7 +229,7 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)  # type: ignore
-        hidden_states = self.mlp(hidden_states)  # type: ignore
+        hidden_states = self.mlp(hidden_states, use_sparse=use_sparse)  # type: ignore
         hidden_states = residual + hidden_states
         outputs = (hidden_states,)
         if output_attentions:
