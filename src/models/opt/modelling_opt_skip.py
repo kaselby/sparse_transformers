@@ -237,7 +237,10 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
         if self.do_layer_norm_before:
             hidden_states = self.final_layer_norm(hidden_states)
 
-        hidden_states = self.mlp(hidden_states)
+        if self.is_sparse:
+            hidden_states = self.mlp(hidden_states, use_sparse=use_sparse)  # type: ignore
+        else:
+            hidden_states = self.mlp(hidden_states)  # type: ignore
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
         hidden_states = (residual + hidden_states).view(hidden_states_shape)

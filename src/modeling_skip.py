@@ -253,7 +253,10 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)  # type: ignore
-        hidden_states = self.mlp(hidden_states, use_sparse=use_sparse)  # type: ignore
+        if self.is_sparse:
+            hidden_states = self.mlp(hidden_states, use_sparse=use_sparse)  # type: ignore
+        else:
+            hidden_states = self.mlp(hidden_states)  # type: ignore
         hidden_states = residual + hidden_states
         outputs = (hidden_states,)
         if output_attentions:
