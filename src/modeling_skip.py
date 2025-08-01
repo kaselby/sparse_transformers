@@ -20,7 +20,7 @@ from transformers.utils import logging
 from transformers.utils.import_utils import is_torch_flex_attn_available
 from transformers.activations import ACT2FN
 
-from sparse_transformers import WeightCache, sparse_mlp_forward
+from sparse_transformers import WeightCache
 from src.activation_capture import ActivationCapture
 
 if is_torch_flex_attn_available():
@@ -104,16 +104,27 @@ class SkipMLP(nn.Module):
     
     def forward(self, x: torch.Tensor, use_sparse: bool = True) -> torch.Tensor:
         if use_sparse:
-            return self._forward_sparse(x)
+            if self.use_weight_cache:
+                return self._forward_sparse_weight_cache(x)
+            else:
+                return self._forward_sparse_no_cache(x)
         else:
             return self._forward(x)
     
-    def _forward_sparse(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward_sparse_weight_cache(self, x: torch.Tensor) -> torch.Tensor:
         gate, up = x.matmul(self.weight_cache.get_concat_weight().t()).chunk(2, dim=-1)
         out = (self.act_fn(gate) * up).matmul(self.weight_cache.get_active_down_weight().t())
         return out
+
+    def _forward_sparse_no_cache(self, x: torch.Tensor) -> torch.Tensor:
+        # this is inefficient and will need to be updated if used for anything other than debugging
+        up = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
+        if self.weight_mask:
+            up = up * self.weight_mask
+        out = self.down_proj(up)
+        return out
     
-    def _forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward_dense(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
@@ -167,7 +178,14 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         pass
 
     def _set_mlp_inference(self, config, layer_idx=None):
-        pass
+        self.mlp = SkipMLP(
+            config.hidden_size,
+            config.intermediate_size,
+            config.sparsities[layer_idx],
+            config.mlp_bias,
+            config.hidden_act,
+            getattr(config, 'use_weight_cache', True)
+        )
 
     @property
     def weight_cache(self):
@@ -193,8 +211,12 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
             binary_mask.scatter_(-1,active_inds,True)
         elif self.sparsity_method == "statistical_topk":
             binary_mask = self._gaussian_topk(lora_proj_scores)
+        binary_mask = binary_mask.any(dim=0)
 
-        self.weight_cache.update_active_weights(binary_mask.any(dim=0))  # type: ignore
+        if self.use_weight_cache:
+            self.weight_cache.update_active_weights(binary_mask)  # type: ignore
+        else:
+            self.mlp.weight_mask = binary_mask
     
     def forward(
         self,
