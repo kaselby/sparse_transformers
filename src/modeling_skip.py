@@ -109,7 +109,7 @@ class SkipMLP(nn.Module):
             else:
                 return self._forward_sparse_no_cache(x)
         else:
-            return self._forward(x)
+            return self._forward_dense(x)
     
     def _forward_sparse_weight_cache(self, x: torch.Tensor) -> torch.Tensor:
         gate, up = x.matmul(self.weight_cache.get_concat_weight().t()).chunk(2, dim=-1)
@@ -233,7 +233,7 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)  # type: ignore
         use_sparse = self.is_sparse and hidden_states.size(1) == 1  # use dense computation for prefill stage and sparse for cached inference
-        if use_sparse:  # Use PyTorch's built-in training flag
+        if use_sparse:  
             self._compute_binary_mask(hidden_states)
           
         # Self Attention

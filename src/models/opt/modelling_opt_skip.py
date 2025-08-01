@@ -110,7 +110,7 @@ class OPTSkipMLP(nn.Module):
             else:
                 return self._forward_sparse_no_cache(x)
         else:
-            return self._forward(x)
+            return self._forward_dense(x)
     
     def _forward_sparse_weight_cache(self, x: torch.Tensor) -> torch.Tensor:
         up = self.act_fn(x.matmul(self.weight_cache.get_concat_weight().t()))
@@ -207,7 +207,8 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
         if self.do_layer_norm_before:
             hidden_states = self.self_attn_layer_norm(hidden_states)
 
-        if self.is_sparse:  # Use PyTorch's built-in training flag
+        use_sparse = self.is_sparse and hidden_states.size(1) == 1  # use dense computation for prefill stage and sparse for cached inference
+        if use_sparse: 
             self._compute_binary_mask(hidden_states)
 
         # Self Attention
