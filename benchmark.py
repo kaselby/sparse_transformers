@@ -8,7 +8,7 @@ import numpy as np
 import os
 
 import torch
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer, DynamicCache
 from src.utilities.cuda_utils import GPUMonitor, setup_cuda_debugging
 from src.utilities.sys_utils import print_system_info
 import src.models   # adds models to registry
@@ -26,12 +26,16 @@ def parse_args() -> argparse.Namespace:
                       help='Config file')
     parser.add_argument('--max_response_length', type=int, default=-1,
                       help='Maximum response tokens per prompt.')
-    parser.add_argument("--sp_dir", type=str, default="",
+    parser.add_argument("--sp_dir", type=str, default=None,
                         help="Path to trained predictor dir for sparse model.")
     parser.add_argument("--lora_size", type=float, default=4.0,
                        help="Size of lora predictors to use as percentage of total hidden size")
     parser.add_argument("--sp_layers", default="all", nargs='+',
                        help="Which layers to use sparse predictors for")
+    parser.add_argument("--sparsity_method", default="naive", choices=["naive", "topk", "statistical_topk"],
+                       help="Which method to use to determine active indices")
+    parser.add_argument('--use_cache', action='store_true', default=False,
+                      help='Whether to use KV cache')
     return parser.parse_args()
 
 
@@ -113,13 +117,15 @@ def reset_model_state(model: AutoModelForCausalLM, model_device: torch.device = 
     if hasattr(model, 'reset_cache'):
         model.reset_cache()
 
+
 def benchmark_single_prompt(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     prompt: str,
     max_new_tokens: int,
     device: torch.device,
-    temperature: float = 0.7
+    temperature: float = 0.7,
+    use_cache: bool = True
 ) -> Dict:
     """Benchmark a single prompt for TTFT and TPS metrics."""
     
@@ -129,6 +135,7 @@ def benchmark_single_prompt(
     # Tokenize input
     inputs = tokenizer(prompt, return_tensors='pt', padding=True, truncation=True, max_length=512)
     input_ids = inputs['input_ids'].to(device)
+    attention_mask = inputs['attention_mask'].to(device)
     
     input_tokens = input_ids.shape[1]
     
@@ -151,6 +158,13 @@ def benchmark_single_prompt(
     # Generate tokens with streaming to measure TTFT
     generated_tokens = []
     first_token_time = None
+
+    if use_cache:
+        past_key_values = DynamicCache()
+        cache_position = torch.arange(input_tokens, dtype=torch.int64, device=device)
+    else:
+        past_key_values = None
+        cache_position = None
     
     with torch.no_grad():
         current_input_ids = input_ids
@@ -159,9 +173,21 @@ def benchmark_single_prompt(
             # Forward pass
             if device.type == 'cuda':
                 with torch.amp.autocast(device_type='cuda'):
-                    outputs = model(current_input_ids)
+                    outputs = model(
+                        input_ids=current_input_ids, 
+                        attention_mask=attention_mask, 
+                        cache_position=cache_position, 
+                        past_key_values=past_key_values, 
+                        use_cache=use_cache
+                    )
             else:
-                outputs = model(current_input_ids)
+                outputs = model(
+                    input_ids=current_input_ids, 
+                    attention_mask=attention_mask, 
+                    cache_position=cache_position, 
+                    past_key_values=past_key_values, 
+                    use_cache=use_cache
+                )
             
             # Record first token time
             if step == 0:
@@ -187,7 +213,12 @@ def benchmark_single_prompt(
                 break
             
             # Update input for next iteration
-            current_input_ids = torch.cat([current_input_ids, next_token], dim=-1)
+            if use_cache:
+                current_input_ids = next_token
+                cache_position = cache_position[-1:] + 1
+            else:
+                current_input_ids = torch.cat([current_input_ids, next_token], dim=-1)
+            attention_mask = torch.cat([attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1)
     
     # Record end time
     if device.type == 'cuda':
@@ -238,7 +269,8 @@ def benchmark_language_model(
     tokenizer: AutoTokenizer,
     test_prompts: List[Dict],
     device: torch.device,
-    temperature: float = 0.7
+    temperature: float = 0.7,
+    use_cache: bool = True
 ) -> Dict:
     """Benchmark language model across multiple prompts."""
     
@@ -257,7 +289,8 @@ def benchmark_language_model(
                 prompt=prompt_config['prompt'],
                 max_new_tokens=prompt_config['max_tokens'],
                 device=device,
-                temperature=temperature
+                temperature=temperature,
+                use_cache=use_cache
             )
             
             result['prompt_description'] = prompt_config['description']
@@ -309,7 +342,8 @@ def run_inference(
     test_prompts: List[Dict],
     model_device: torch.device,
     model_name: str,
-    verbose: bool = False
+    verbose: bool = False,
+    use_cache: bool = True
 ) -> Dict:
     """Run comprehensive inference benchmark."""
     
@@ -329,7 +363,8 @@ def run_inference(
             prompt=warmup_prompt['prompt'],
             max_new_tokens=min(50, warmup_prompt['max_tokens']),
             device=model_device,
-            temperature=0.7
+            temperature=0.7,
+            use_cache=use_cache
         )
     
     # Main benchmark
@@ -338,7 +373,8 @@ def run_inference(
         tokenizer=tokenizer,
         test_prompts=test_prompts,
         device=model_device,
-        temperature=0.7
+        temperature=0.7,
+        use_cache=use_cache
     )
     
     return results
@@ -406,6 +442,7 @@ def main():
         args.sp_layers = [int(x) for x in args.sp_layers]
     config.sp_layers = args.sp_layers
     config.lora_size = args.lora_size / 100.0
+    config.sparsity_method = args.sparsity_method
     checkpoint = config._name_or_path
     tokenizer = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
@@ -440,7 +477,8 @@ def main():
         test_prompts=test_prompts,
         model_device=skip_device,
         model_name=skip_name,
-        verbose=args.verbose
+        verbose=args.verbose,
+        use_cache=args.use_cache
     )
 
     # Run standard model benchmark using HuggingFace implementation
@@ -452,7 +490,8 @@ def main():
         test_prompts=test_prompts,
         model_device=standard_device,
         model_name=standard_name,
-        verbose=args.verbose
+        verbose=args.verbose,
+        use_cache=args.use_cache
     )
     
 
