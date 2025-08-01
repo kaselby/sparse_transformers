@@ -55,15 +55,6 @@ class LlamaSkipDecoderLayer(SkipDecoderLayer):
     def _set_mlp_train(self, config, layer_idx):
         self.mlp = LlamaMLP(config)
 
-    def _set_mlp_inference(self, config, layer_idx):
-        self.mlp = SkipMLP(
-            config.hidden_size,
-            config.intermediate_size,
-            config.sparsities[layer_idx],
-            config.mlp_bias,
-            config.hidden_act
-        )
-
 
 
 class LlamaSkipPreTrainedModel(PreTrainedModel):
