@@ -71,8 +71,8 @@ class OPTSkipMLP(nn.Module):
         self.use_weight_cache = use_weight_cache
         
         # Initialize mask but defer WeightCache creation until post_init
-        self.init_mask = torch.ones(intermediate_size, dtype=torch.bool)
-        self.init_mask[int(intermediate_size * sparsity):] = 0
+        self.register_buffer('init_mask', torch.ones(intermediate_size, dtype=torch.bool))
+        #self.init_mask[int(intermediate_size * sparsity):] = 0
         
         self.weight_cache = None
 
@@ -159,7 +159,7 @@ class OPTSkipDecoderLayer(SkipDecoderLayer):
         self.mlp = OPTSkipMLP(
             config.hidden_size,
             config.intermediate_size,
-            config.sparsity,
+            config.sparsities[layer_idx],
             config.enable_bias,
             "relu",
             getattr(config, 'use_weight_cache', True)

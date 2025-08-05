@@ -74,6 +74,7 @@ def main():
             pretrained_dict = torch.load(layer_path)
             layer.mlp_lora_proj.load_state_dict(pretrained_dict)
         model.tie_weights()
+        model.to(device)
         model.reset_cache()
 
     wrapped_model = HFLM(

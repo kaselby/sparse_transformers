@@ -287,7 +287,8 @@ torch::Tensor sparse_mlp_forward_cuda(
     const torch::Tensor& active_down_weight,
     torch::Tensor& down_proj_buffer,
     torch::Tensor& combined_proj_buffer,
-    const std::string& activation_fn) {
+    const std::string& activation_fn,
+    bool has_gate) {
     
     // Store original input shape for reshaping output later
     auto original_shape = input.sizes().vec();
