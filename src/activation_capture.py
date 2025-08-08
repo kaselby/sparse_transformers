@@ -149,7 +149,7 @@ def capture_model(model):
     >>> model.activation_capture.register_hooks()   # Use activation capture class to record model activations
     __main__.DLRM_Net
     '''
-    model_type = model.model_type
+    model_type = model.config.model_type
     
     # Use model-specific implementation if available, otherwise fall back to default
     if model_type in LOOKUP_DICT:
