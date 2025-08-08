@@ -47,7 +47,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.trainer_utils import set_seed
 
 import matplotlib.pyplot as plt
-from src.activation_capture import Hook
+from src.activation_capture import Hook, capture_model
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -62,7 +62,7 @@ class ContextualSparsityAnalyzer:
         self.tokenizer = tokenizer
         self.device = device
 
-        model.activation_capture = model.ACTIVATION_CAPTURE(model)
+        model.activation_capture = capture_model(model)
         model.activation_capture.register_hooks(hooks=[Hook.ACT])
         self.num_layers = len(self.model.activation_capture.get_layers())
 
