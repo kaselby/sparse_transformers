@@ -145,11 +145,10 @@ def analyze_sparsity(args, model_name, device):
             if (batch_idx + 1) % 100 == 0:
                 logger.info(f"Processed {batch_idx + 1}/{len(dataloader)} sequences")
 
-        for key, layer_sparsities in analyzer.mlp_sparsity.items():
-            analyzer.mlp_sparsity[key] = [
-                sum(layer_sparsities[layer_idx]) / len(layer_sparsities[layer_idx])
-                for layer_idx in range(len(layer_sparsities))
-            ]
+        analyzer.mlp_sparsity = [
+            sum(analyzer.mlp_sparsity[layer_idx]) / len(analyzer.mlp_sparsity[layer_idx])
+            for layer_idx in range(len(analyzer.mlp_sparsity))
+        ]
     finally:
         analyzer.model.activation_capture.remove_hooks()
     return analyzer.mlp_sparsity

@@ -57,10 +57,8 @@ def main():
         model = AutoModelForCausalLM.from_pretrained(args.model_name_or_config)
     if args.model_type == "sparse":
         config = AutoConfig.from_pretrained(args.model_name_or_config)
-        if args.sp_layers != "all":
-            args.sp_layers = [int(x) for x in args.sp_layers]
+        config.sp_layers = "all" if "all" in args.sp_layers else [int(x) for x in args.sp_layers]
         config.lora_size = args.lora_size / 100.0
-        config.sp_layers = args.sp_layers
         config.sparsity_method = args.sparsity_method
         if args.disable_weight_cache:
             config.use_weight_cache = False

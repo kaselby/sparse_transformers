@@ -438,9 +438,7 @@ def main():
 
     # Load models and tokenizer
     config = AutoConfig.from_pretrained(args.config)
-    if args.sp_layers != "all":
-        args.sp_layers = [int(x) for x in args.sp_layers]
-    config.sp_layers = args.sp_layers
+    config.sp_layers = "all" if "all" in args.sp_layers else [int(x) for x in args.sp_layers]
     config.lora_size = args.lora_size / 100.0
     config.sparsity_method = args.sparsity_method
     checkpoint = config._name_or_path
