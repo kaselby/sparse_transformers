@@ -276,9 +276,7 @@ def main():
 
     outs = defaultdict(dict)
     for model in args.models:
-        model_sparsities = analyze_sparsity(args, model, device)
-        for k, v in model_sparsities.items():
-            outs[k][model] = v
+        outs[model] = analyze_sparsity(args, model, device)
     json.dump(outs, open(os.path.join(args.output_dir, "sparsity.json"), "w"))
 
     if args.make_plots:
