@@ -1,7 +1,7 @@
 {
   "_name_or_path": "meta-llama/Llama-3.2-3B-Instruct",
   "sparsity_method": "naive",
-  "sparsity": [
+  "sparsities": [
     0.5778245008550584,
     0.651826779358089,
     0.69715037336573,

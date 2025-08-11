@@ -43,7 +43,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers.trainer_utils import set_seed
 
-from src.activation_capture import Hook
+from src.activation_capture import Hook, capture_model
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -145,7 +145,7 @@ def process_batch(
 
 
 def generate_dataset(
-    config_path: str,
+    model_name: str,
     dataset_name: str,
     dataset_config: Optional[str],
     output_dir: str,
@@ -157,10 +157,6 @@ def generate_dataset(
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    config = AutoConfig.from_pretrained(config_path)
-    model_name = config._name_or_path
-    config.sp_layers = []
-
     # Load tokenizer and model
     logger.info(f"Loading model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -168,7 +164,6 @@ def generate_dataset(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        config=config,
         torch_dtype=torch.float32,
         device_map="auto" if device.type == "cuda" else None,
     )
@@ -178,7 +173,7 @@ def generate_dataset(
 
     model.eval()
 
-    model.activation_capture = model.ACTIVATION_CAPTURE(model)
+    model.activation_capture = capture_model(model)
     model.activation_capture.register_hooks(hooks=[Hook.IN, Hook.ACT])
 
     # Get model dimensions
@@ -420,7 +415,7 @@ def main():
 
     # Generate dataset
     generate_dataset(
-        config_path=args.model_name,
+        model_name=args.model_name,
         dataset_name=args.dataset,
         dataset_config=args.dataset_config,
         output_dir=args.output_dir,

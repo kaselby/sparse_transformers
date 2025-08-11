@@ -47,7 +47,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.trainer_utils import set_seed
 
 import matplotlib.pyplot as plt
-from src.activation_capture import Hook
+from src.activation_capture import Hook, capture_model
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -62,7 +62,7 @@ class ContextualSparsityAnalyzer:
         self.tokenizer = tokenizer
         self.device = device
 
-        model.activation_capture = model.ACTIVATION_CAPTURE(model)
+        model.activation_capture = capture_model(model)
         model.activation_capture.register_hooks(hooks=[Hook.ACT])
         self.num_layers = len(self.model.activation_capture.get_layers())
 
@@ -145,11 +145,10 @@ def analyze_sparsity(args, model_name, device):
             if (batch_idx + 1) % 100 == 0:
                 logger.info(f"Processed {batch_idx + 1}/{len(dataloader)} sequences")
 
-        for key, layer_sparsities in analyzer.mlp_sparsity.items():
-            analyzer.mlp_sparsity[key] = [
-                sum(layer_sparsities[layer_idx]) / len(layer_sparsities[layer_idx])
-                for layer_idx in range(len(layer_sparsities))
-            ]
+        analyzer.mlp_sparsity = [
+            sum(analyzer.mlp_sparsity[layer_idx]) / len(analyzer.mlp_sparsity[layer_idx])
+            for layer_idx in range(len(analyzer.mlp_sparsity))
+        ]
     finally:
         analyzer.model.activation_capture.remove_hooks()
     return analyzer.mlp_sparsity
@@ -277,9 +276,7 @@ def main():
 
     outs = defaultdict(dict)
     for model in args.models:
-        model_sparsities = analyze_sparsity(args, model, device)
-        for k, v in model_sparsities.items():
-            outs[k][model] = v
+        outs[model] = analyze_sparsity(args, model, device)
     json.dump(outs, open(os.path.join(args.output_dir, "sparsity.json"), "w"))
 
     if args.make_plots:
