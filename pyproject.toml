@@ -9,7 +9,24 @@ description = "Sparse Inference for transformers"
 authors = [
     {name = "NimbleEdge"}
 ]
-requires-python = ">=3.7"
+requires-python = ">=3.9"
+dependencies = [
+    "transformers==4.53.0",
+    "numpy",
+    "psutil",
+    "optimum-onnx[onnxruntime]",
+    "attrs",
+    "scikit-learn",
+    "accelerate",
+    "datasets",
+    "sentencepiece",
+    "protobuf",
+    "wandb",
+    "ninja",
+    "timm",
+    "pillow",
+    "lm-eval",
+]
 
 [tool.setuptools]
 packages = ["sparse_transformers"] 

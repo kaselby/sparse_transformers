@@ -139,7 +139,8 @@ class SkipDecoderLayer(ABC, GradientCheckpointingLayer):
         self.sparsity_method = config.sparsity_method
         self.sparsity = config.sparsities[layer_idx]
         if self.sparsity_method == "statistical_topk":
-            self.std_multiplier = torch.distributions.normal.Normal(0, 1).icdf(torch.tensor(self.sparsity))
+            self.std_multiplier = 2
+            #self.std_multiplier = torch.distributions.normal.Normal(0, 1).icdf(torch.tensor(self.sparsity))
         elif self.sparsity_method == "topk":
             self.k = int(self.intermediate_size * (1-self.sparsity))
         self.use_weight_cache = getattr(config, 'use_weight_cache', True)

@@ -9,7 +9,7 @@ class ActivationCaptureOpt(ActivationCapture):
     def _register_act_hook(self, layer_idx, layer):
         def hook(module, input, output):
             # Just detach, don't clone or move to CPU yet
-            self.mlp_activations[Hook.ACT][layer_idx] = input[0].clone().detach()
+            self.mlp_activations[Hook.ACT][layer_idx] = output[0].clone().detach()
             return output
         handle = layer.activation_fn.register_forward_hook(hook)
         return handle
